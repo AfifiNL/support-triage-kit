@@ -59,7 +59,7 @@ Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
 ```bash
 make install       # .venv with all extras and dev tools (locked)
 make demo          # the flow above: webhook -> triage -> review -> outbox, offline
-make check         # lint, strict types, 149 tests, the eval gate and the replay gate (what CI runs)
+make check         # lint, strict types, 185 tests, the eval gate and the replay gate (what CI runs)
 ```
 
 Run the API (mock model by default; nothing leaves the machine):
