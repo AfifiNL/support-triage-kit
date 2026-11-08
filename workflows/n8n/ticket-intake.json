@@ -1,0 +1,162 @@
+{
+  "name": "Support triage: ticket intake",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "support-ticket",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "45bfadae-913e-5fbb-8531-8e96168b86d6",
+      "name": "Ticket webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "d5cebca7-57cf-517d-9234-544811ab73ad"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "78d7afc1-8f93-56c9-8754-5986e96c6721",
+              "name": "payload",
+              "type": "string",
+              "value": "={{ JSON.stringify({ id: String($json.body.id), subject: $json.body.subject || '', body: $json.body.body, channel: $json.body.channel || 'email' }) }}"
+            },
+            {
+              "id": "44ba82ec-f0d9-5ec3-9b2f-eecf5bdc1db3",
+              "name": "ts",
+              "type": "number",
+              "value": "={{ Math.floor(Date.now() / 1000) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "68cd247b-0cc0-5f2a-98b2-8b975017f614",
+      "name": "Build payload",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "action": "hmac",
+        "type": "SHA256",
+        "value": "={{ $json.ts + '.' + $json.payload }}",
+        "dataPropertyName": "signature",
+        "secret": "={{ $env.TRIAGE_WEBHOOK_SECRET }}",
+        "encoding": "hex"
+      },
+      "id": "033fbe5a-e370-54ca-88ad-a8950620a03b",
+      "name": "Sign payload",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.TRIAGE_API_URL }}/v1/webhooks/tickets",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Triage-Signature",
+              "value": "=t={{ $json.ts }},v1={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.payload }}",
+        "options": {}
+      },
+      "id": "88748857-d386-53e2-a053-37961a504ffb",
+      "name": "Send to triage service",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ review_id: $json.review_id, route: $json.route, duplicate: $json.duplicate }) }}",
+        "options": {}
+      },
+      "id": "69a23491-e338-52b7-9c9b-9d91f6b9dfb7",
+      "name": "Acknowledge",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Ticket webhook": {
+      "main": [
+        [
+          {
+            "node": "Build payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build payload": {
+      "main": [
+        [
+          {
+            "node": "Sign payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign payload": {
+      "main": [
+        [
+          {
+            "node": "Send to triage service",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send to triage service": {
+      "main": [
+        [
+          {
+            "node": "Acknowledge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

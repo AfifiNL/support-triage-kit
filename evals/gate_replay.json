@@ -1,0 +1,14 @@
+{
+  "_comment": "Floors for the recorded live run, written before the first live call (2026-11-08) and not tuned to its results. The deterministic layers must stay at 1.0 whatever the model does.",
+  "floors": {
+    "pii_recall": 1.0,
+    "escalation_recall": 1.0,
+    "name_recall": 0.9,
+    "route_accuracy": 0.8,
+    "category_accuracy": 0.8,
+    "priority_accuracy": 0.6,
+    "draft_pass_rate": 0.8
+  },
+  "max_drop": 0.0,
+  "max_model_errors": 0
+}
