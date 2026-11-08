@@ -9,13 +9,16 @@ Policy encoded here (generic, adjust to your own):
     for card numbers, IBANs or IP addresses (they are never restored into a reply);
   * it may not contain personal data of its own (the model never saw any, so any it writes is
     made up);
-  * it may not reveal internal queue names or talk about being an AI model.
+  * it may not reveal internal queue names or talk about being an AI model;
+  * it must be in the ticket's language (English or Dutch).
+The commitment patterns exist in English and Dutch.
 """
 
 from __future__ import annotations
 
 import re
 
+from triage_kit.language import detect
 from triage_kit.redact import RESTORABLE, placeholders_in, redact
 from triage_kit.rules import ESCALATIONS_QUEUE, ONCALL_QUEUE, ROUTES
 
@@ -48,12 +51,44 @@ COMMITMENTS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
         ),
         ("gives legal advice", r"\blegal advice\b"),
         ("mentions being an AI", r"\b(as an ai|language model|I am an ai|I'm an ai)\b"),
+        # Dutch
+        (
+            "promises a refund",
+            # verbs only: "terugboeking"/"terugbetaling" as nouns name the customer's request
+            r"\b(wij|we|ik)\b[^.!?\n]{0,40}\b(terugbetalen|terugbetaald|terugstorten"
+            r"|teruggestort|terugboeken|teruggeboekt|geld terug)\b"
+            # separable verb: "wij betalen het bedrag ... terug"
+            r"|\b(wij|we|ik)\b[^.!?\n]{0,40}\b(betalen|storten|boeken)\b[^.!?\n]{0,40}\bterug\b",
+        ),
+        (
+            "says a refund was issued",
+            r"\bterugbetaling\b[^.!?\n]{0,30}\b(verwerkt|gestort|goedgekeurd|uitgevoerd"
+            r"|onderweg|in gang gezet)",
+        ),
+        (
+            "offers compensation",
+            r"\b(compensatie|schadevergoeding|tegoedbon|korting\w*|tegoed|gecrediteerd"
+            r"|gratis (maand|maanden|verzending))",
+        ),
+        ("guarantees", r"\bgaranderen\b|\bgegarandeerd\b"),
+        (
+            "promises a deadline",
+            r"\bbinnen \d+( ?[-\u2013] ?\d+)? (minuten|uur|uren|dagen|werkdagen|weken)\b"
+            r"|\b(vandaag nog|uiterlijk morgen|voor het einde van de dag)\b",
+        ),
+        (
+            "confirms data deletion",
+            r"\b(gegevens|account)\b[^.!?\n]{0,20}\b(zijn|is) (nu )?(verwijderd|gewist)\b"
+            r"|\b(wij|we|ik) (hebben|heb)\b[^.!?\n]{0,30}\b(verwijderd|gewist)\b",
+        ),
+        ("gives legal advice", r"\bjuridisch advies\b"),
+        ("mentions being an AI", r"\b(als (een )?ai|taalmodel)\b"),
     )
 )
 INTERNAL_NAMES = {*ROUTES.values(), ESCALATIONS_QUEUE, ONCALL_QUEUE}
 
 
-def check_draft(draft: str, mapping: dict[str, str]) -> list[str]:
+def check_draft(draft: str, mapping: dict[str, str], language: str | None = None) -> list[str]:
     findings: list[str] = []
     text = draft.strip()
     if not text:
@@ -71,8 +106,10 @@ def check_draft(draft: str, mapping: dict[str, str]) -> list[str]:
         kinds = ", ".join(f"{k} x{v}" for k, v in own_pii.items())
         findings.append(f"contains personal data the model was never given: {kinds}")
     for name, rx in COMMITMENTS:
-        if rx.search(text):
+        if rx.search(text) and name not in findings:
             findings.append(name)
+    if language is not None and detect(text) != language:
+        findings.append(f"reply is not in the ticket's language ({language})")
     low = text.lower()
     leaked = sorted(q for q in INTERNAL_NAMES if re.search(rf"\b{re.escape(q)}\b", low))
     # Team names that are plain English words ("billing") are fine in a reply; only flag the

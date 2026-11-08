@@ -9,8 +9,18 @@ import re
 from triage_kit.models import Category, ModelOutput, Priority
 from triage_kit.providers.base import TriageRequest
 
+# English and Dutch keywords per category, more specific categories first.
 KEYWORDS: dict[Category, tuple[str, ...]] = {
-    Category.PRIVACY: ("personal data", "my data", "gdpr", "data protection", "erase"),
+    Category.PRIVACY: (
+        "personal data",
+        "my data",
+        "gdpr",
+        "data protection",
+        "erase",
+        "persoonsgegevens",
+        "avg",
+        "inzage",
+    ),
     Category.CANCELLATION: (
         "cancel",
         "unsubscribe",
@@ -18,6 +28,9 @@ KEYWORDS: dict[Category, tuple[str, ...]] = {
         "end my subscription",
         "stop my subscription",
         "close my subscription",
+        "opzeggen",
+        "annuleer",
+        "annuleren",
     ),
     Category.BILLING: (
         "charged",
@@ -31,6 +44,12 @@ KEYWORDS: dict[Category, tuple[str, ...]] = {
         "receipt",
         "price",
         "card",
+        "betaald",
+        "betaling",
+        "factuur",
+        "afgeschreven",
+        "btw",
+        "bedrag",
     ),
     Category.SHIPPING: (
         "delivery",
@@ -43,6 +62,14 @@ KEYWORDS: dict[Category, tuple[str, ...]] = {
         "arrived",
         "damaged",
         "missing item",
+        "pakket",
+        "bezorger",
+        "bezorging",
+        "levering",
+        "doos",
+        "rugzak",
+        "verstuurd",
+        "track and trace",
     ),
     Category.ACCOUNT: (
         "password",
@@ -55,6 +82,8 @@ KEYWORDS: dict[Category, tuple[str, ...]] = {
         "username",
         "email address",
         "account",
+        "inloggen",
+        "wachtwoord",
     ),
     Category.TECHNICAL: (
         "error",
@@ -70,6 +99,11 @@ KEYWORDS: dict[Category, tuple[str, ...]] = {
         "down",
         "slow",
         "500",
+        "crasht",
+        "storing",
+        "fout",
+        "synchroniseren",
+        "oplader",
     ),
     Category.FEEDBACK: (
         "suggestion",
@@ -81,6 +115,9 @@ KEYWORDS: dict[Category, tuple[str, ...]] = {
         "feedback",
         "compliment",
         "disappointed",
+        "suggestie",
+        "vriendelijk",
+        "top service",
     ),
 }
 URGENT = (
@@ -92,6 +129,9 @@ URGENT = (
     "charged three times",
     "charged 3 times",
     "every hour",
+    "storing",
+    "ligt stil",
+    "niemand in ons team",
 )
 HIGH = (
     "urgent",
@@ -105,8 +145,24 @@ HIGH = (
     "cannot access",
     "deadline",
     "still not",
+    "dringend",
+    "vandaag",
+    "niet meer",
+    "twee keer",
+    "kan zo niet werken",
 )
-LOW = ("suggestion", "feature request", "idea", "just wanted", "love", "compliment", "no rush")
+LOW = (
+    "suggestion",
+    "feature request",
+    "idea",
+    "just wanted",
+    "love",
+    "compliment",
+    "no rush",
+    "suggestie",
+    "geen haast",
+    "even laten weten",
+)
 
 REPLIES: dict[Category, str] = {
     Category.BILLING: "Thank you for contacting us about your payment. We are checking the "
@@ -123,6 +179,24 @@ REPLIES: dict[Category, str] = {
     "will handle it and contact you to confirm your identity first.",
     Category.FEEDBACK: "Thank you for your feedback. We have shared it with the team.",
     Category.OTHER: "Thank you for your message. A colleague will read it and get back to you.",
+}
+
+
+REPLIES_NL: dict[Category, str] = {
+    Category.BILLING: "Bedankt voor uw bericht over uw betaling. We controleren de afschrijvingen "
+    "op uw account en laten u weten wat we vinden.",
+    Category.TECHNICAL: "Bedankt voor het melden van dit probleem. Ons technische team bekijkt "
+    "het. Stuur ons als dat kan een schermafbeelding van de foutmelding.",
+    Category.ACCOUNT: "Bedankt voor uw bericht over uw account. Voor uw veiligheid controleren we "
+    "eerst het verzoek en helpen we u daarna weer toegang te krijgen.",
+    Category.SHIPPING: "Bedankt voor uw bericht over de bezorging. We vragen de status na bij de "
+    "vervoerder en laten u weten wat we horen.",
+    Category.CANCELLATION: "We hebben uw verzoek om op te zeggen ontvangen. Een collega bevestigt "
+    "de details en de einddatum met u.",
+    Category.PRIVACY: "We hebben uw verzoek over uw persoonsgegevens ontvangen. Ons privacyteam "
+    "neemt het in behandeling en vraagt u eerst om uw identiteit te bevestigen.",
+    Category.FEEDBACK: "Bedankt voor uw reactie. We hebben die met het team gedeeld.",
+    Category.OTHER: "Bedankt voor uw bericht. Een collega leest het en neemt contact met u op.",
 }
 
 
@@ -153,12 +227,18 @@ class MockTriageModel:
         else:
             priority = Priority.NORMAL
         first_line = (request.subject.strip() or request.body.strip() or "(empty)").splitlines()[0]
-        reply = REPLIES[category]
+        dutch = request.language == "nl"
+        reply = (REPLIES_NL if dutch else REPLIES)[category]
         if category is Category.ACCOUNT and "[EMAIL_1]" in request.placeholders:
-            reply += " Any reset link will go to [EMAIL_1]."
+            reply += (
+                " Een eventuele resetlink gaat naar [EMAIL_1]."
+                if dutch
+                else " Any reset link will go to [EMAIL_1]."
+            )
+        greeting, signature = ("Hallo,", "Klantenservice") if dutch else ("Hello,", "Support team")
         return ModelOutput(
             category=category,
             priority=priority,
             summary=f"{category.value}: {first_line[:120]}",
-            reply=f"Hello,\n\n{reply}\n\nSupport team",
+            reply=f"{greeting}\n\n{reply}\n\n{signature}",
         )

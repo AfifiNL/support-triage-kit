@@ -88,3 +88,28 @@ def test_iban_followed_by_a_word_is_still_redacted() -> None:
 def test_restore_never_puts_back_cards_ibans_or_ips() -> None:
     r = redact("mail a@example.com, card 4111 1111 1111 1111, ip 192.0.2.7")
     assert restore(r.text, r.mapping) == "mail a@example.com, card [CARD_1], ip [IP_1]"
+
+
+@pytest.mark.parametrize(
+    ("text", "name"),
+    [
+        ("Groeten,\nMila van den Berg", "Mila van den Berg"),
+        ("Met vriendelijke groet,\nSanne de Vries", "Sanne de Vries"),
+        ("Mijn naam is Pieter Smit. De doos is kapot.", "Pieter Smit"),
+        ("Hallo, ik ben Jan de Vries en ik heb een vraag.", "Jan de Vries"),
+    ],
+)
+def test_dutch_names(text: str, name: str) -> None:
+    r = redact(text)
+    assert r.mapping == {"[NAME_1]": name}
+
+
+def test_lower_case_words_after_ik_ben_are_not_names() -> None:
+    assert redact("Ik ben blij met de service.").mapping == {}
+
+
+@pytest.mark.parametrize(
+    "text", ["Met vriendelijke groet,\nKlantenservice", "Kind regards,\nSupport team"]
+)
+def test_our_own_signatures_are_not_names(text: str) -> None:
+    assert redact(text).mapping == {}

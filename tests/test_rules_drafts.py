@@ -92,3 +92,62 @@ def test_clean_draft_passes() -> None:
 def test_draft_findings(draft: str, finding: str) -> None:
     findings = check_draft(draft, {"[EMAIL_1]": "a@example.com", "[CARD_1]": "4111"})
     assert any(f.startswith(finding) for f in findings), findings
+
+
+@pytest.mark.parametrize(
+    ("text", "rule"),
+    [
+        (
+            "Op grond van de AVG verzoek ik u al mijn persoonsgegevens te verwijderen.",
+            "data_protection_request",
+        ),
+        ("Welke persoonsgegevens hebben jullie van mij?", "data_protection_request"),
+        ("Ik maak gebruik van mijn recht op vergetelheid.", "data_protection_request"),
+        ("Ik heb mijn advocaat ingeschakeld.", "legal_threat"),
+        ("Ik heb bij mijn bank een terugboeking aangevraagd.", "chargeback"),
+        ("Ik rook een brandlucht bij de oplader.", "safety"),
+    ],
+)
+def test_dutch_rules_fire(text: str, rule: str) -> None:
+    assert rule in rules.evaluate(text).hits
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["Graag het bedrag terugboeken.", "the avg price went up", "Mijn rookmelder piept."],
+)
+def test_dutch_near_misses(text: str) -> None:
+    assert rules.evaluate(text).hits == ()
+
+
+@pytest.mark.parametrize(
+    ("draft", "finding"),
+    [
+        ("Wij betalen het bedrag zo snel mogelijk terug.", "promises a refund"),
+        ("Uw terugbetaling is verwerkt.", "says a refund was issued"),
+        ("U krijgt 10% korting op uw volgende bestelling.", "offers compensation"),
+        ("U hoort binnen 2 werkdagen van ons.", "promises a deadline"),
+        ("Uw gegevens zijn verwijderd.", "confirms data deletion"),
+    ],
+)
+def test_dutch_draft_findings(draft: str, finding: str) -> None:
+    assert finding in check_draft(draft, {}, "nl")
+
+
+def test_reply_must_be_in_the_tickets_language() -> None:
+    english = "Hello,\n\nThanks for your message. We are looking into it.\n\nSupport team"
+    dutch = "Hallo,\n\nBedankt voor uw bericht. We kijken ernaar.\n\nKlantenservice"
+    assert check_draft(english, {}, "en") == []
+    assert check_draft(dutch, {}, "nl") == []
+    assert any("language" in f for f in check_draft(english, {}, "nl"))
+
+
+@pytest.mark.parametrize(
+    "draft",
+    [
+        "We hebben uw melding over de aangevraagde terugboeking ontvangen.",
+        "We hebben uw verzoek om terugbetaling ontvangen en bekijken het.",
+    ],
+)
+def test_dutch_nouns_for_the_customers_request_are_not_promises(draft: str) -> None:
+    assert "promises a refund" not in check_draft(draft, {}, "nl")

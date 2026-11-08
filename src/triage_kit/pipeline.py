@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from triage_kit import rules
 from triage_kit.drafts import check_draft
+from triage_kit.language import detect
 from triage_kit.models import Category, Priority, Ticket, TriageResult
 from triage_kit.providers.base import ProviderError, TriageModel, TriageRequest
 from triage_kit.redact import Redaction, redact
@@ -26,6 +27,7 @@ def redact_ticket(ticket: Ticket) -> tuple[Redaction, str, str]:
 def triage(ticket: Ticket, model: TriageModel) -> TriageResult:
     red, subject, body = redact_ticket(ticket)
     outcome = rules.evaluate(f"{subject}\n{body}")
+    language = detect(f"{subject}\n{body}")
     request = TriageRequest(
         ticket_id=ticket.id,
         channel=ticket.channel,
@@ -33,6 +35,7 @@ def triage(ticket: Ticket, model: TriageModel) -> TriageResult:
         subject=subject,
         body=body,
         placeholders=tuple(red.mapping),
+        language=language,
     )
     try:
         out = model.triage(request)
@@ -43,6 +46,7 @@ def triage(ticket: Ticket, model: TriageModel) -> TriageResult:
         priority = rules.max_priority(Priority.NORMAL, outcome.priority_floor)
         return TriageResult(
             ticket_id=ticket.id,
+            language=language,
             category=category,
             priority=priority,
             route=rules.route_for(category, priority, outcome),
@@ -58,9 +62,10 @@ def triage(ticket: Ticket, model: TriageModel) -> TriageResult:
         )
     category = outcome.force_category or out.category
     priority = rules.max_priority(out.priority, outcome.priority_floor)
-    findings = check_draft(out.reply, red.mapping)
+    findings = check_draft(out.reply, red.mapping, language)
     return TriageResult(
         ticket_id=ticket.id,
+        language=language,
         category=category,
         priority=priority,
         route=rules.route_for(category, priority, outcome),

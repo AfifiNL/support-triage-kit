@@ -1,5 +1,5 @@
 {
-  "_comment": "Floors written before the first eval run (2026-11-08) and not tuned to it. pii_recall and escalation_recall are deterministic code: anything below 1.0 is a bug. max_drop is the allowed regression against the baseline.",
+  "_comment": "Floors written before the first eval run (2026-11-08) and not tuned to it. pii_recall and escalation_recall are deterministic code: anything below 1.0 is a bug. max_drop is the allowed regression against the baseline. language_accuracy added in pass 2 (2026-11-08), before the first run with Dutch tickets.",
   "floors": {
     "pii_recall": 1.0,
     "escalation_recall": 1.0,
@@ -7,7 +7,8 @@
     "route_accuracy": 0.7,
     "category_accuracy": 0.7,
     "priority_accuracy": 0.5,
-    "draft_pass_rate": 0.9
+    "draft_pass_rate": 0.9,
+    "language_accuracy": 0.95
   },
   "max_drop": 0.02,
   "max_model_errors": 0

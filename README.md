@@ -1,6 +1,7 @@
 # support-triage-kit
 
-Triage for customer-support tickets: an LLM classifies, prioritises and drafts a first reply,
+Triage for customer-support tickets in English and Dutch: an LLM classifies, prioritises and
+drafts a first reply in the ticket's language,
 while deterministic code around it redacts personal data before the model sees anything, routes
 legally sensitive tickets whatever the model says, checks every draft, and holds every reply for
 a person to approve. Nothing is ever sent automatically.
@@ -18,8 +19,11 @@ a person to approve. Nothing is ever sent automatically.
 - **Draft checks**: no promised refunds, compensation, deadlines or completed data deletion; no
   invented contact details; no placeholders that do not exist or that stand for a card number,
   IBAN or IP address; no internal queue names. A flagged draft cannot be approved unedited.
-- **An eval set** (60 synthetic tickets, labelled) with a gate that fails CI on a drop, a mock
-  model so everything runs offline, and a **recorded live run** (Gemini) that CI replays.
+- **English and Dutch**: language detection picks the reply language; the rules, the redaction
+  of names and the draft checks have Dutch patterns next to the English ones.
+- **An eval set** (80 synthetic tickets: 60 English, 20 Dutch, labelled) with a gate that fails
+  CI on a drop, a mock model so everything runs offline, and a **recorded live run** (Gemini)
+  that CI replays.
 
 ## What it does
 
@@ -55,7 +59,7 @@ Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
 ```bash
 make install       # .venv with all extras and dev tools (locked)
 make demo          # the flow above: webhook -> triage -> review -> outbox, offline
-make check         # lint, strict types, 120 tests, the eval gate and the replay gate (what CI runs)
+make check         # lint, strict types, 149 tests, the eval gate and the replay gate (what CI runs)
 ```
 
 Run the API (mock model by default; nothing leaves the machine):
@@ -78,7 +82,10 @@ ticket (webhook, HMAC-signed, timestamped)
 redact ─────── e-mail, phone, card (Luhn), IBAN (mod-97), IP, names (narrow) → [KIND_n]
    │           one value = one placeholder; the map never leaves the service
    ▼
-rules ──────── data-protection request · legal threat · chargeback · safety
+language ───── English or Dutch (function-word counts): picks the reply language
+   │
+   ▼
+rules ──────── data-protection request · legal threat · chargeback · safety (EN + NL patterns)
    │           → forced queue and a priority floor the model cannot lower
    ▼
 model ──────── category, priority, one-line summary, reply draft (structured output)
@@ -135,17 +142,18 @@ every URL they call on this service is a route the API serves.
 
 ## Evals
 
-`evals/tickets.jsonl` holds 60 synthetic tickets across eight categories, each labelled with
-category, priority, queue, expected escalations, and the exact personal-data strings it contains
-(e-mails on example domains, phone numbers in reserved fictional ranges, published test card
-numbers and IBANs, documentation IP ranges, invented names). It is split into `dev` (30) and
-`test` (30); the split was fixed before any run.
+`evals/tickets.jsonl` holds 80 synthetic tickets across eight categories, 60 in English and 20
+in Dutch, each labelled with language, category, priority, queue, expected escalations, and the
+exact personal-data strings it contains (e-mails on example domains, phone numbers in reserved
+fictional ranges, published test card numbers and IBANs, documentation IP ranges, invented
+names). It is split into `dev` (40) and `test` (40); each split was fixed before its first run.
 
 | metric | meaning |
 |---|---|
 | pii_recall | share of labelled e-mails, phones, cards, IBANs and IPs of which no part is visible to the model (no e-mail local part, no run of 4+ letters or digits; floor 1.0) |
 | name_recall | the same for names, word by word (narrow patterns; floor 0.9) |
 | escalation_recall | share of labelled escalations the rules raised (floor 1.0) |
+| language_accuracy | English/Dutch detection matches the label (floor 0.95) |
 | route / category / priority accuracy | exact match with the label |
 | urgent_recall | labelled-urgent tickets predicted urgent |
 | draft_pass_rate | share of drafts that passed the draft checks |
@@ -155,44 +163,49 @@ were written before the first run. The gate also fails when a score drops agains
 baseline, or on any model error or replay miss. The tests prove it bites: a model that answers
 "other / low" for everything fails it, while redaction and escalation stay at 1.0.
 
-**Offline, mock model** (keyword rules; measures the deterministic layers, not a model):
+**Offline, mock model** (keyword rules written alongside the tickets, Dutch keywords included;
+it measures the deterministic layers, not a model):
 
-| scope | pii | names | escalations | route | category | priority | urgent recall | drafts pass |
-|---|---|---|---|---|---|---|---|---|
-| all (60) | 1.000 | 1.000 | 1.000 | 0.833 | 0.783 | 0.700 | 0.833 | 1.000 |
+| scope | pii | names | escalations | language | route | category | priority | urgent recall | drafts pass |
+|---|---|---|---|---|---|---|---|---|---|
+| all (80) | 1.000 | 1.000 | 1.000 | 1.000 | 0.863 | 0.825 | 0.750 | 0.875 | 1.000 |
 
-**Live, `gemini-3.6-flash`** (Vertex AI, EU location, thinking level low), 2026-11-08:
+**Live, `gemini-3.6-flash`** (Vertex AI, EU location, thinking level low). Two recordings, both
+on 2026-11-08; each split was run on its final code once, `test` only after `dev` was settled:
 
-| run | items | route | category | priority | urgent recall | drafts pass |
-|---|---|---|---|---|---|---|
-| dev, first prompt | 30 | 0.933 | 0.933 | 0.933 | 1.000 | **0.800** |
-| dev, after the fix below | 30 | 0.933 | 0.933 | 0.933 | 1.000 | 1.000 |
-| **test, run once** | 30 | 0.967 | 1.000 | 0.800 | **0.333** | 1.000 |
-| all (recorded cassette, replayed with today's checks) | 60 | 0.950 | 0.967 | 0.867 | 0.667 | 0.950 |
+| recording | run | items | route | category | priority | urgent recall | drafts pass |
+|---|---|---|---|---|---|---|---|
+| 1 (English only) | dev, first prompt | 30 | 0.933 | 0.933 | 0.933 | 1.000 | **0.800** |
+| 1 | dev, after the placeholder fix | 30 | 0.933 | 0.933 | 0.933 | 1.000 | 1.000 |
+| 1 | test, run once | 30 | 0.967 | 1.000 | 0.800 | **0.333** | 1.000 |
+| **2 (English + Dutch, current)** | dev | 40 | 0.950 | 0.950 | 0.925 | 1.000 | 1.000* |
+| **2** | **test, run once** | 40 | **1.000** | **1.000** | 0.900 | 1.000 | 1.000 |
+| **2** | all (the cassette CI replays) | 80 | 0.975 | 0.975 | 0.912 | 1.000 | 1.000 |
 
-PII, name and escalation recall were 1.000 in every run (they do not depend on the model). The
-first three rows were scored with the first version of the draft checks. An independent review
-then made them stricter (no card number, IBAN or IP placeholder in a reply; more ways of
-promising a refund, a deadline or compensation). Replayed through the current checks, three
-recorded drafts are flagged: two mention the customer's card as `[CARD_1]` and one an IP address
-as `[IP_1]`.
+PII, name, escalation and language scores were 1.000 in every run (they do not depend on the
+model). \* One Dutch dev draft was first flagged as "promises a refund" because it named the
+customer's chargeback ("terugboeking", a noun); the Dutch refund pattern was narrowed to verbs on
+`dev` (a checker change, no new model call) before `test` ran.
 
-- **The draft checker caught a real failure.** With the first prompt, 6 of 30 dev drafts greeted
-  the customer as `[NAME_1]` in tickets that had no name placeholder; the prompt's own example
-  had suggested it. The fix lists the placeholders that exist in each ticket. Without the
-  checker, those drafts would have reached a reviewer looking finished.
-- **Urgency is the weak spot.** On `test` the model called two of three urgent tickets "high":
-  a business customer's integration failing on every request (orders not coming through) and an
-  unrecognised login. The third (a charging dock that smelled of burning plastic) was called
-  urgent by the model, and the safety rule would have forced it anyway. A missed urgent ticket
-  lands in the right team at "high", not on call. Adding rules for these cases now would be tuning on the test split; it needs
-  fresh tickets first.
-- 30 tickets per split is small: one ticket is 0.033. Treat differences of one ticket as noise.
+- **The draft checker caught a real failure in recording 1.** With the first prompt, 6 of 30 dev
+  drafts greeted the customer as `[NAME_1]` in tickets that had no name placeholder; the
+  prompt's own example had suggested it. The fix lists the placeholders that exist in each
+  ticket. Recording 1 replayed through today's stricter checks flags three more drafts that
+  repeat a card or IP placeholder; recording 2's prompt forbids that, and none does.
+- **Urgency varies between runs.** The same three urgent `test` tickets (an integration failing
+  for a business customer, an unrecognised login, an overheating charger) were 1 of 3 in
+  recording 1 and 3 of 3 in recording 2. The prompt change between them did not touch the
+  priority definitions, so read this as run-to-run variation, not as a fix.
+- **Dutch drafts are Dutch, mostly.** All 20 Dutch drafts were in Dutch and signed
+  "Klantenservice"; 3 of them greet the customer as "Beste customer", an English word the
+  language check does not catch.
+- 40 tickets per split is small: one ticket is 0.025. Treat one-ticket differences as noise.
 
 CI replays the recorded run (`make eval-replay`) at no cost: any change to the prompt, the
 redaction or the request format changes the request hash, and the replay fails until someone
 re-records it (`make record-live`, which needs credentials and costs money). The live runs above
-used 91 calls in total (1 smoke test, 2 × 30 on `dev`, 30 on `test`).
+used 172 calls in total: recording 1 took 91 (1 smoke test, 2 × 30 on `dev`, 30 on `test`),
+recording 2 took 81 (1 smoke test, 40 on `dev`, 40 on `test`).
 
 ## Configuration
 
@@ -213,7 +226,10 @@ used 91 calls in total (1 smoke test, 2 × 30 on `dev`, 30 on `test`).
   a sign-off ("Kind regards,"). Names elsewhere in the text, postal addresses, dates of birth,
   customer numbers and national id numbers are not redacted. Over-redaction is accepted: a long
   digit run that fails the card and IBAN checks may still be redacted as a phone number.
-- **English only.** Rules, mock keywords and draft checks are English patterns.
+- **English and Dutch only.** Other languages are treated as English. The language detector
+  counts common function words; a ticket mixing both languages gets the majority language.
+  The Dutch patterns and reply templates were written by the author, not checked by a native
+  speaker.
 - **Small eval set**, written by the author of the code. The live numbers are one run each on
   30 tickets; model output varies between runs.
 - **The n8n workflows were validated as JSON** (structure, connections, routes), not imported into

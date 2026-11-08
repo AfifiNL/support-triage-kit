@@ -18,6 +18,7 @@ class TriageRequest:
     subject: str  # redacted
     body: str  # redacted
     placeholders: tuple[str, ...]
+    language: str = "en"
 
 
 class TriageModel(Protocol):

@@ -51,6 +51,12 @@ the window a replay is harmless: a ticket id already stored with the same conten
 from the store without calling the model, and the same id with other content is refused (409).
 Without a configured secret the webhook refuses everything rather than accepting unsigned input.
 
+**Language is decided by code, not the model.** A function-word count picks English or Dutch;
+the model is told which language to answer in, and the draft checker refuses a reply in the
+other language. Rules, name patterns (with surname particles such as "van den") and the
+commitment patterns exist in both languages. Dutch commitment patterns match verbs, not nouns:
+"terugboeking" names the customer's chargeback and must not count as a promised refund.
+
 **One secret per role.** Signing tickets, reviewing, and delivering are separate secrets. The
 delivery integration can read the outbox and acknowledge, and cannot approve; so an automated
 workflow cannot turn itself into the person who says yes.
@@ -77,4 +83,5 @@ fails the gate with "re-record". Re-recording reuses unchanged calls, so it cost
 | gate floors | `evals/gate.json`, `evals/gate_replay.json` | written before the first run; deterministic metrics at 1.0, model metrics at levels a useful triage must reach |
 | baseline tolerance | 0.02 (mock), 0.00 (replay) | the mock and the replay are deterministic, so any change is real |
 | prompt change | placeholder list per ticket | made on `dev` after 6/30 drafts used a placeholder that did not exist; `test` was run once afterwards |
+| Dutch support (pass 2) | 20 Dutch tickets, dev/test 10/10 | `language_accuracy` floor 0.95 written before the first run; one checker change on `dev` (Dutch refund pattern: verbs only); recording 2 re-recorded `dev` and ran `test` once |
 | stricter draft checks | after the independent review | re-baselined the replay (`evals/baseline_replay.json`): 3 recorded drafts that repeat a card or IP placeholder are now flagged; the floors were not changed |

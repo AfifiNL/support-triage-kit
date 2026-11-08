@@ -33,18 +33,37 @@ PHONE = re.compile(
 )
 # Name tokens: Unicode letters, apostrophes and hyphens; capitalisation is checked in `_name_ok`.
 _NAME_PART = r"[^\W\d_][^\W\d_'\u2019-]*(?:['\u2019-][^\W\d_]+)*"
-_NAME = rf"{_NAME_PART}(?: {_NAME_PART}){{0,2}}"
-NAME_INTRO = re.compile(rf"\b(?i:my name is) ({_NAME})")
+# Dutch surnames carry lower-case particles: "Mila van den Berg", "Jan de Vries".
+_PARTICLE = r"(?:van|de|der|den|het|ter|ten|te|op|in|'t)"
+_NAME = rf"{_NAME_PART}(?: (?:{_PARTICLE} )*{_NAME_PART}){{0,2}}"
+NAME_INTRO = re.compile(rf"\b(?i:my name is|mijn naam is|ik ben) ({_NAME})")
 SIGN_OFF = re.compile(
     r"^(?i:kind regards|best regards|warm regards|regards|best|thanks|thank you|many thanks"
-    r"|cheers|sincerely)"
+    r"|cheers|sincerely"
+    r"|met vriendelijke groet(?:en)?|vriendelijke groet(?:en)?|hartelijke groet(?:en)?"
+    r"|groet(?:en|jes)?|mvg|bedankt|alvast bedankt)"
     rf"[,!.]?[ \t]*\r?\n[ \t]*({_NAME})[ \t]*\r?$",
     re.MULTILINE,
 )
 PLACEHOLDER = re.compile(r"\[(EMAIL|IBAN|CARD|IP|PHONE|NAME)_(\d+)\]")
 RESTORABLE = frozenset({"EMAIL", "PHONE", "NAME"})
 # Capitalised words that can sit alone on the line after a sign-off but are not names.
-NOT_NAMES = {"Order", "Account", "Customer", "Support", "Sent", "Ticket", "Reference"}
+NOT_NAMES = {
+    "Order",
+    "Account",
+    "Customer",
+    "Support",
+    "Sent",
+    "Ticket",
+    "Reference",
+    "Bestelling",
+    "Klant",
+    "Klantnummer",
+    "Verzonden",
+    "Klantenservice",
+    "Klantenteam",
+    "Team",
+}
 
 
 def _luhn_ok(digits: str) -> bool:
@@ -139,9 +158,35 @@ def _phone_ok(value: str) -> bool:
     return 9 <= len(re.sub(r"\D", "", value)) <= 15
 
 
-def _name_ok(value: str) -> bool:
-    parts = value.split()
-    return parts[0] not in NOT_NAMES and all(p[0].isupper() for p in parts)
+_PARTICLES = frozenset({"van", "de", "der", "den", "het", "ter", "ten", "te", "op", "in", "'t"})
+
+
+def _trim_name(value: str) -> str | None:
+    """The capitalised name at the start of `value`: stop at the first lower-case word that is
+    not a surname particle, drop trailing particles. None when nothing name-like is left."""
+    kept: list[str] = []
+    for part in value.split():
+        if (part in _PARTICLES and kept) or part[0].isupper():
+            kept.append(part)
+        else:
+            break
+    while kept and kept[-1] in _PARTICLES:
+        kept.pop()
+    if not kept or kept[0] in NOT_NAMES:
+        return None
+    return " ".join(kept)
+
+
+def _sub_names(r: _Redactor, text: str, rx: re.Pattern[str]) -> str:
+    def repl(m: re.Match[str]) -> str:
+        name = _trim_name(m.group(1))
+        if name is None:
+            return m.group(0)
+        start = m.start(1) - m.start(0)
+        whole = m.group(0)
+        return whole[:start] + r.placeholder("NAME", name) + whole[start + len(name) :]
+
+    return rx.sub(repl, text)
 
 
 def _sub_iban(r: _Redactor, text: str) -> str:
@@ -167,8 +212,8 @@ def redact(text: str) -> Redaction:
     out = r.sub(out, IPV4, "IP")
     out = r.sub(out, IPV6, "IP", _ipv6_ok)
     out = r.sub(out, PHONE, "PHONE", _phone_ok)
-    out = r.sub(out, NAME_INTRO, "NAME", _name_ok, group=1)
-    out = r.sub(out, SIGN_OFF, "NAME", _name_ok, group=1)
+    out = _sub_names(r, out, NAME_INTRO)
+    out = _sub_names(r, out, SIGN_OFF)
     # A name found once is redacted everywhere it appears in the ticket.
     for ph, value in list(r.mapping.items()):
         if ph.startswith("[NAME_"):

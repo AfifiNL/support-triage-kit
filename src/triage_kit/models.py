@@ -57,6 +57,7 @@ class ModelOutput(BaseModel):
 
 class TriageResult(BaseModel):
     ticket_id: str
+    language: Literal["en", "nl"] = "en"
     category: Category
     priority: Priority
     route: str

@@ -20,8 +20,9 @@ GATE = json.loads((ROOT / "evals" / "gate.json").read_text())
 
 def test_dataset_is_consistent() -> None:
     items = evals.load_dataset(DATASET)
-    assert len(items) == 60
+    assert len(items) == 80
     assert {i.split for i in items} == {"dev", "test"}
+    assert sum(i.gold.language == "nl" for i in items) == 20
     for i in items:
         text = i.ticket.subject + "\n" + i.ticket.body
         for value in i.gold.pii + i.gold.names:

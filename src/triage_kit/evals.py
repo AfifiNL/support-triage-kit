@@ -7,6 +7,7 @@ Metrics (per scope: all, dev, test):
   name_recall         the same for people's names (narrow patterns only; see the README)
   escalation_recall   share of labelled escalations (data-protection request, legal threat,
                       chargeback, safety) that the rules raised (floor 1.0)
+  language_accuracy   English/Dutch detection matches the label (picks rules and reply language)
   route_accuracy      queue matches the label
   category_accuracy, priority_accuracy
   urgent_recall       labelled-urgent tickets predicted urgent (a missed urgent ticket is the
@@ -35,6 +36,7 @@ HIGHER_IS_BETTER = (
     "pii_recall",
     "name_recall",
     "escalation_recall",
+    "language_accuracy",
     "route_accuracy",
     "category_accuracy",
     "priority_accuracy",
@@ -50,6 +52,7 @@ class Gold(BaseModel):
     escalations: list[str] = []
     pii: list[str] = []
     names: list[str] = []
+    language: str = "en"
 
 
 class Item(BaseModel):
@@ -84,7 +87,10 @@ def _leaked(value: str, text: str) -> bool:
 
 
 def _name_leaked(name: str, text: str) -> bool:
-    tokens = [t for t in re.findall(r"[^\W\d_][\w'\u2019-]*", name) if len(t) >= 2]
+    # Capitalised parts only: a surname particle ("van", "de") also occurs as a plain word.
+    tokens = [
+        t for t in re.findall(r"[^\W\d_][\w'\u2019-]*", name) if len(t) >= 2 and t[0].isupper()
+    ]
     return any(re.search(rf"(?<!\w){re.escape(t)}(?!\w)", text) for t in tokens)
 
 
@@ -124,6 +130,9 @@ def metrics(rows: Iterable[Scored]) -> dict[str, Any]:
         "escalation_recall": _ratio(esc_hit, esc_total),
         "false_escalations": esc_extra,
         "route_accuracy": _ratio(sum(r.result.route == r.item.gold.route for r in rows), n),
+        "language_accuracy": _ratio(
+            sum(r.result.language == r.item.gold.language for r in rows), n
+        ),
         "category_accuracy": _ratio(
             sum(r.result.category is r.item.gold.category for r in rows), n
         ),
