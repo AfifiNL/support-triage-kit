@@ -152,7 +152,7 @@ class MockTriageModel:
             priority = Priority.LOW
         else:
             priority = Priority.NORMAL
-        first_line = request.subject.strip() or request.body.strip().splitlines()[0]
+        first_line = (request.subject.strip() or request.body.strip() or "(empty)").splitlines()[0]
         reply = REPLIES[category]
         if category is Category.ACCOUNT and "[EMAIL_1]" in request.placeholders:
             reply += " Any reset link will go to [EMAIL_1]."

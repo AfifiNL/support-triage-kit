@@ -16,12 +16,13 @@ from pathlib import Path
 from typing import Any
 
 from triage_kit.models import TriageResult
-from triage_kit.redact import restore
+from triage_kit.redact import RESTORABLE, placeholders_in, restore
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS reviews (
     id            INTEGER PRIMARY KEY,
     ticket_id     TEXT NOT NULL UNIQUE,
+    body_sha256   TEXT NOT NULL,
     created_at    TEXT NOT NULL,
     status        TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected')),
     triage_json   TEXT NOT NULL,
@@ -59,6 +60,11 @@ class ReviewError(Exception):
         self.status = status
 
 
+def _same(text: str, candidates: list[str]) -> bool:
+    norm = " ".join(text.split())
+    return any(norm == " ".join(c.split()) for c in candidates if c)
+
+
 def _now() -> str:
     return dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -77,7 +83,18 @@ class Store:
             (review_id, _now(), actor, action, detail),
         )
 
-    def add(self, result: TriageResult, pii_map: dict[str, str]) -> tuple[int, bool]:
+    def find(self, ticket_id: str) -> tuple[int, str] | None:
+        """(review id, body hash) of a ticket already stored, so a redelivery can be answered
+        without calling the model again."""
+        with self._lock:
+            row = self._db.execute(
+                "SELECT id, body_sha256 FROM reviews WHERE ticket_id = ?", (ticket_id,)
+            ).fetchone()
+            return None if row is None else (int(row["id"]), str(row["body_sha256"]))
+
+    def add(
+        self, result: TriageResult, pii_map: dict[str, str], body_sha256: str
+    ) -> tuple[int, bool]:
         """Store a triaged ticket. Returns (review id, created); a known ticket id is not
         stored twice (webhooks are delivered at least once)."""
         with self._lock:
@@ -89,9 +106,15 @@ class Store:
             self._db.execute("BEGIN IMMEDIATE")
             try:
                 cur = self._db.execute(
-                    "INSERT INTO reviews (ticket_id, created_at, status, triage_json, pii_map_json)"
-                    " VALUES (?, ?, 'pending', ?, ?)",
-                    (result.ticket_id, _now(), result.model_dump_json(), json.dumps(pii_map)),
+                    "INSERT INTO reviews (ticket_id, body_sha256, created_at, status, triage_json,"
+                    " pii_map_json) VALUES (?, ?, ?, 'pending', ?, ?)",
+                    (
+                        result.ticket_id,
+                        body_sha256,
+                        _now(),
+                        result.model_dump_json(),
+                        json.dumps(pii_map),
+                    ),
                 )
                 rid = int(cur.lastrowid or 0)
                 self._event(rid, "system", "triaged", f"{result.route}/{result.priority.value}")
@@ -148,22 +171,36 @@ class Store:
                 raise ReviewError(409, f"review {rid} is already {row['status']}")
             triage = json.loads(row["triage_json"])
             pii = json.loads(row["pii_map_json"])
-            if edited_reply is None or not edited_reply.strip():
-                if triage["status"] != "ready_for_review" or not triage.get("draft"):
+            draft = triage.get("draft") or ""
+            flagged = triage["status"] != "ready_for_review" or not draft
+            edited = (edited_reply or "").strip()
+            if edited and _same(edited, [draft, restore(draft, pii)]):
+                edited = ""  # resubmitting the draft unchanged is not an edit
+            if not edited:
+                if flagged:
                     raise ReviewError(
                         422,
                         "this draft failed its checks or is missing; approve with an edited reply",
                     )
-                reply, action = restore(triage["draft"], pii), "approved"
+                reply, action = restore(draft, pii), "approved"
             else:
-                reply, action = restore(edited_reply.strip(), pii), "approved_with_edits"
+                blocked = sorted(
+                    p for p in placeholders_in(edited) if p[1:].split("_")[0] not in RESTORABLE
+                )
+                if blocked:
+                    raise ReviewError(
+                        422, f"card numbers, IBANs and IP addresses are never sent: {blocked}"
+                    )
+                reply, action = restore(edited, pii), "approved_with_edits"
             self._db.execute("BEGIN IMMEDIATE")
             try:
-                self._db.execute(
+                cur = self._db.execute(
                     "UPDATE reviews SET status = 'approved', final_reply = ?, reviewer = ?,"
-                    " decided_at = ? WHERE id = ?",
+                    " decided_at = ? WHERE id = ? AND status = 'pending'",
                     (reply, reviewer, _now(), rid),
                 )
+                if cur.rowcount != 1:
+                    raise ReviewError(409, f"review {rid} was decided concurrently")
                 self._db.execute(
                     "INSERT INTO outbox (review_id, ticket_id, reply, created_at)"
                     " VALUES (?, ?, ?, ?)",
@@ -183,11 +220,13 @@ class Store:
                 raise ReviewError(409, f"review {rid} is already {row['status']}")
             self._db.execute("BEGIN IMMEDIATE")
             try:
-                self._db.execute(
+                cur = self._db.execute(
                     "UPDATE reviews SET status = 'rejected', reviewer = ?, decided_at = ?"
-                    " WHERE id = ?",
+                    " WHERE id = ? AND status = 'pending'",
                     (reviewer, _now(), rid),
                 )
+                if cur.rowcount != 1:
+                    raise ReviewError(409, f"review {rid} was decided concurrently")
                 self._event(rid, reviewer, "rejected", reason)
                 self._db.execute("COMMIT")
             except BaseException:
@@ -217,6 +256,31 @@ class Store:
                 ).fetchone()
                 if not exists:
                     raise ReviewError(404, f"outbox item {outbox_id} not found")
+
+    def forget(self, rid: int, actor: str) -> None:
+        """Erase the personal data held for one review (a data-protection erasure request):
+        the placeholder map, the restored replies, and the texts that may contain names the
+        redaction missed. Routing facts and the event log stay."""
+        with self._lock:
+            row = self._review(rid)
+            triage = json.loads(row["triage_json"])
+            for field in ("redacted_text", "draft", "summary"):
+                if triage.get(field):
+                    triage[field] = "[erased]"
+            self._db.execute("BEGIN IMMEDIATE")
+            try:
+                self._db.execute(
+                    "UPDATE reviews SET pii_map_json = '{}', triage_json = ?,"
+                    " final_reply = CASE WHEN final_reply IS NULL THEN NULL ELSE '[erased]' END"
+                    " WHERE id = ?",
+                    (json.dumps(triage), rid),
+                )
+                self._db.execute("UPDATE outbox SET reply = '[erased]' WHERE review_id = ?", (rid,))
+                self._event(rid, actor, "erased")
+                self._db.execute("COMMIT")
+            except BaseException:
+                self._db.execute("ROLLBACK")
+                raise
 
     def events(self, rid: int) -> list[dict[str, Any]]:
         with self._lock:

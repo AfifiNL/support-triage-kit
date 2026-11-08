@@ -19,6 +19,14 @@ from triage_kit.redact import placeholders_in, redact, restore
         ("Hi, my name is Daniel Okafor, call me", "NAME", "Daniel Okafor"),
         ("Help!\n\nKind regards,\nLiam O'Brien", "NAME", "Liam O'Brien"),
         ("Thanks!\n  Ana Lucia Costa  ", "NAME", "Ana Lucia Costa"),
+        ("card 4111 1111 1111 1111 123 exp", "CARD", "4111 1111 1111 1111 123"),
+        ("card 4111.1111.1111.1111", "CARD", "4111.1111.1111.1111"),
+        ("write to jürgen.weiß@example.com", "EMAIL", "jürgen.weiß@example.com"),
+        ("iban gb82 west 1234 5698 7654 32", "IBAN", "gb82 west 1234 5698 7654 32"),
+        ("from 2001:db8::1 today", "IP", "2001:db8::1"),
+        ("Thanks,\r\nSøren Ørsted\r\n", "NAME", "Søren Ørsted"),
+        ("Help\n\nKind Regards,\nAna Lee", "NAME", "Ana Lee"),
+        ("My name is Zoë Müller.", "NAME", "Zoë Müller"),
     ],
 )
 def test_detects(text: str, kind: str, value: str) -> None:
@@ -37,6 +45,7 @@ def test_detects(text: str, kind: str, value: str) -> None:
         "call 555 0148",  # too few digits for a phone number
         "Best,\nOrder Number",  # not a name
         "screen burn-in",
+        "at 12:30:45 and 09:40",  # times are not IPv6 addresses
     ],
 )
 def test_leaves_non_personal_data_alone(text: str) -> None:
@@ -69,3 +78,13 @@ def test_name_found_once_is_redacted_everywhere() -> None:
 
 def test_restore_leaves_unknown_placeholders() -> None:
     assert restore("to [EMAIL_9]", {"[EMAIL_1]": "x@example.com"}) == "to [EMAIL_9]"
+
+
+def test_iban_followed_by_a_word_is_still_redacted() -> None:
+    r = redact("IBAN GB82 WEST 1234 5698 7654 32 EUR please")
+    assert r.text == "IBAN [IBAN_1] EUR please"
+
+
+def test_restore_never_puts_back_cards_ibans_or_ips() -> None:
+    r = redact("mail a@example.com, card 4111 1111 1111 1111, ip 192.0.2.7")
+    assert restore(r.text, r.mapping) == "mail a@example.com, card [CARD_1], ip [IP_1]"

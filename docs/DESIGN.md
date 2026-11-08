@@ -17,8 +17,10 @@ depend on the vendor, and the eval proves they stay at 1.0 with a useless model.
 
 **Redact before the model, restore after the person.** Placeholders are typed and numbered
 (`[EMAIL_1]`), and one value always maps to one placeholder, so a draft can still say "the link
-goes to [EMAIL_1]". The map stays in the service; the reviewer sees the restored reply, because
-the reviewer is staff and must see what the customer will get. Checksums decide whether a digit
+goes to [EMAIL_1]". The map stays in the service. Only contact data (e-mail, phone, name) is
+ever restored, in the reviewer's view and in the approved reply, because that is what a reply
+legitimately needs; card numbers, IBANs and IP addresses stay placeholders, and a draft or an
+edited reply that uses them is refused. Checksums decide whether a digit
 run is a card (Luhn) or an IBAN (mod-97); a digit run that fails them may still be redacted as a
 phone number, because over-redaction is the safe direction. Phone numbers need 9 to 15 digits so
 order numbers, dates and amounts survive.
@@ -31,7 +33,9 @@ near-misses ("screen burn-in", "data plan", "food court").
 
 **A failed draft check never deletes the draft.** Dropping the draft would hide what the model
 did. The ticket goes to the queue flagged with the findings, and the API refuses to approve that
-draft unedited (HTTP 422); the reviewer writes or edits the reply.
+draft unedited (HTTP 422), including when the same text is resubmitted as an "edit"; the
+reviewer writes or edits the reply. Decisions only apply to a review that is still pending, so
+two reviewers cannot both decide one ticket.
 
 **The policy checks commitments, not tone.** The draft rules block promises a person must make
 (refunds, compensation, deadlines, confirmed deletion), invented personal data, placeholders the
@@ -42,9 +46,18 @@ an integration polls and acknowledges, so delivery, retries and the helpdesk API
 workflow tool, and the service cannot send by mistake.
 
 **Signed, timestamped webhooks; fail closed.** HMAC-SHA256 over `timestamp.body`, a five-minute
-window against replays, constant-time comparison. Without a configured secret the webhook
-refuses everything rather than accepting unsigned input. Duplicate deliveries of a ticket id
-return the existing review (webhooks are delivered at least once).
+window that limits how long a captured request stays valid, constant-time comparison. Within
+the window a replay is harmless: a ticket id already stored with the same content is answered
+from the store without calling the model, and the same id with other content is refused (409).
+Without a configured secret the webhook refuses everything rather than accepting unsigned input.
+
+**One secret per role.** Signing tickets, reviewing, and delivering are separate secrets. The
+delivery integration can read the outbox and acknowledge, and cannot approve; so an automated
+workflow cannot turn itself into the person who says yes.
+
+**Erasure.** A data-protection request can be honoured for a stored review: the placeholder map,
+the restored replies and the texts that may hold unredacted names are cleared, the routing facts
+and the event log stay (the log records that the erasure happened).
 
 **SQLite with an append-only event log.** Triggers reject updates and deletes on the event
 table. One process, standard library only; a larger deployment would swap the store.
@@ -64,3 +77,4 @@ fails the gate with "re-record". Re-recording reuses unchanged calls, so it cost
 | gate floors | `evals/gate.json`, `evals/gate_replay.json` | written before the first run; deterministic metrics at 1.0, model metrics at levels a useful triage must reach |
 | baseline tolerance | 0.02 (mock), 0.00 (replay) | the mock and the replay are deterministic, so any change is real |
 | prompt change | placeholder list per ticket | made on `dev` after 6/30 drafts used a placeholder that did not exist; `test` was run once afterwards |
+| stricter draft checks | after the independent review | re-baselined the replay (`evals/baseline_replay.json`): 3 recorded drafts that repeat a card or IP placeholder are now flagged; the floors were not changed |

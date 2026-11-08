@@ -3,8 +3,10 @@ still goes to a person, flagged, with the findings, and the draft cannot be appr
 
 Policy encoded here (generic, adjust to your own):
   * a draft may not promise money, compensation, deadlines or completed data deletion; those
-    are decisions a person makes;
-  * it may only use placeholders that exist in this ticket's redaction map;
+    are decisions a person makes. The patterns over-flag on purpose ("we cannot promise a
+    refund" is flagged too): a flag only means a person rewrites the sentence;
+  * it may only use placeholders that exist in this ticket's redaction map, and never those
+    for card numbers, IBANs or IP addresses (they are never restored into a reply);
   * it may not contain personal data of its own (the model never saw any, so any it writes is
     made up);
   * it may not reveal internal queue names or talk about being an AI model.
@@ -14,7 +16,7 @@ from __future__ import annotations
 
 import re
 
-from triage_kit.redact import placeholders_in, redact
+from triage_kit.redact import RESTORABLE, placeholders_in, redact
 from triage_kit.rules import ESCALATIONS_QUEUE, ONCALL_QUEUE, ROUTES
 
 MAX_CHARS = 1_200
@@ -22,19 +24,27 @@ MAX_CHARS = 1_200
 COMMITMENTS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
     (name, re.compile(rx, re.IGNORECASE))
     for name, rx in (
+        ("promises a refund", r"\b(we|I)\b[^.!?\n]{0,40}\brefund"),
         (
-            "promises a refund",
-            r"\b(we will|we'll|we have|we've|I will|I'll|I have) "
-            r"(\w+ ){0,2}refund",
+            "says a refund was issued",
+            r"\brefund\b[^.!?\n]{0,30}\b(approved|issued|processed|sent|on its way|initiated"
+            r"|started)",
         ),
-        ("says a refund was issued", r"\brefund (has been|was|is being) (issued|processed|sent)"),
-        ("offers compensation", r"\b(compensat\w*|voucher|credit note|goodwill)"),
+        (
+            "offers compensation",
+            r"\b(compensat\w*|vouchers?|credit note|goodwill|discount\w*|\d+ ?% off"
+            r"|free (months?|shipping|upgrade)|credited)",
+        ),
         ("guarantees", r"\bguarantee"),
-        ("promises a deadline", r"\bwithin \d+ (minutes?|hours?|days?|business days?)\b"),
+        (
+            "promises a deadline",
+            r"\bwithin \d+( ?[-\u2013] ?\d+)? (minutes?|hours?|days?|weeks?|business days?"
+            r"|working days?)\b|\bby (today|tonight|tomorrow|end of (the )?day)\b",
+        ),
         (
             "confirms data deletion",
-            r"\b(data|account|information) (has been|was|is now) "
-            r"(deleted|erased|removed)",
+            r"\b(data|account|information) (has been|was|is now) (deleted|erased|removed)"
+            r"|\b(we|I)('ve| have| has)? (now )?(deleted|erased|removed)\b",
         ),
         ("gives legal advice", r"\blegal advice\b"),
         ("mentions being an AI", r"\b(as an ai|language model|I am an ai|I'm an ai)\b"),
@@ -53,6 +63,9 @@ def check_draft(draft: str, mapping: dict[str, str]) -> list[str]:
     unknown = sorted(placeholders_in(text) - set(mapping))
     if unknown:
         findings.append(f"unknown placeholders: {', '.join(unknown)}")
+    sensitive = sorted(p for p in placeholders_in(text) if p[1:].split("_")[0] not in RESTORABLE)
+    if sensitive:
+        findings.append(f"repeats a card number, IBAN or IP address: {', '.join(sensitive)}")
     own_pii = redact(text).counts()
     if own_pii:
         kinds = ", ".join(f"{k} x{v}" for k, v in own_pii.items())

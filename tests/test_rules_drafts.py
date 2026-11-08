@@ -20,6 +20,9 @@ from triage_kit.models import Category, Priority
         ("I will dispute the charge with my bank", "chargeback"),
         ("it smelled like burning plastic", "safety"),
         ("there were sparks from the socket", "safety"),
+        ("Please delete my account and all my data.", "data_protection_request"),
+        ("What information do you have about me?", "data_protection_request"),
+        ("I will sue you", "legal_threat"),
     ],
 )
 def test_rules_fire(text: str, rule: str) -> None:
@@ -33,6 +36,9 @@ def test_rules_fire(text: str, rule: str) -> None:
         "My data plan is too small",
         "We met at the food court",
         "Please charge my new card",
+        "my colleague Sue said hello",
+        "the smoke detector keeps beeping",
+        "how do I burn a CD with your app",
     ],
 )
 def test_near_misses_do_not_fire(text: str) -> None:
@@ -71,11 +77,18 @@ def test_clean_draft_passes() -> None:
         ("As an AI, I cannot say.", "mentions being an AI"),
         ("I passed this to tech-oncall.", "names internal queues"),
         ("Write to help@example.com instead.", "contains personal data"),
+        ("We'll send you a refund.", "promises a refund"),
+        ("Your refund has been approved.", "says a refund was issued"),
+        ("We have deleted your data as requested.", "confirms data deletion"),
+        ("It arrives within 3-5 business days.", "promises a deadline"),
+        ("Here is a 20% discount.", "offers compensation"),
+        ("We have credited your account.", "offers compensation"),
+        ("We see the charge on [CARD_1].", "repeats a card number"),
         ("We emailed [EMAIL_2].", "unknown placeholders"),
         ("", "empty draft"),
         ("x" * 1300, "too long"),
     ],
 )
 def test_draft_findings(draft: str, finding: str) -> None:
-    findings = check_draft(draft, {"[EMAIL_1]": "a@example.com"})
+    findings = check_draft(draft, {"[EMAIL_1]": "a@example.com", "[CARD_1]": "4111"})
     assert any(f.startswith(finding) for f in findings), findings

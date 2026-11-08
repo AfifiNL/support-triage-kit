@@ -18,6 +18,7 @@ Metrics (per scope: all, dev, test):
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -70,16 +71,33 @@ def load_dataset(path: Path) -> list[Item]:
     return items
 
 
+def _leaked(value: str, text: str) -> bool:
+    """A value counts as leaked if any meaningful part of it is still visible, not only the
+    whole string: the local part of an e-mail address, or any run of 4+ letters or digits
+    (one group of a phone number, an IBAN or a card number)."""
+    low = text.lower()
+    if "@" in value:
+        local = value.split("@", 1)[0]
+        return (local if len(local) >= 3 else value).lower() in low
+    parts = [p for p in re.findall(r"[^\W_]+", value) if len(p) >= 4] or [value]
+    return any(p.lower() in low for p in parts)
+
+
+def _name_leaked(name: str, text: str) -> bool:
+    tokens = [t for t in re.findall(r"[^\W\d_][\w'\u2019-]*", name) if len(t) >= 2]
+    return any(re.search(rf"(?<!\w){re.escape(t)}(?!\w)", text) for t in tokens)
+
+
 @dataclass
 class Scored:
     item: Item
     result: TriageResult
 
     def leaks(self) -> list[str]:
-        return [v for v in self.item.gold.pii if v in self.result.redacted_text]
+        return [v for v in self.item.gold.pii if _leaked(v, self.result.redacted_text)]
 
     def name_leaks(self) -> list[str]:
-        return [v for v in self.item.gold.names if v in self.result.redacted_text]
+        return [v for v in self.item.gold.names if _name_leaked(v, self.result.redacted_text)]
 
 
 def _ratio(num: int, den: int) -> float | None:

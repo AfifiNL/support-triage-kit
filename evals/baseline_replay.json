@@ -1,7 +1,7 @@
 {
   "all": {
     "category_accuracy": 0.967,
-    "draft_pass_rate": 1.0,
+    "draft_pass_rate": 0.95,
     "escalation_recall": 1.0,
     "false_escalations": 0,
     "items": 60,
@@ -15,7 +15,7 @@
   },
   "dev": {
     "category_accuracy": 0.933,
-    "draft_pass_rate": 1.0,
+    "draft_pass_rate": 0.967,
     "escalation_recall": 1.0,
     "false_escalations": 0,
     "items": 30,
@@ -29,7 +29,7 @@
   },
   "test": {
     "category_accuracy": 1.0,
-    "draft_pass_rate": 1.0,
+    "draft_pass_rate": 0.933,
     "escalation_recall": 1.0,
     "false_escalations": 0,
     "items": 30,

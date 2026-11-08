@@ -10,12 +10,14 @@ a person to approve. Nothing is ever sent automatically.
 - **Two importable n8n workflows**: ticket intake (sign and forward) and delivery of approved
   replies.
 - **Redaction before the model**: e-mail addresses, phone numbers, card numbers (Luhn), IBANs
-  (mod-97), IP addresses and names in two narrow patterns become placeholders such as
-  `[EMAIL_1]`; the values are restored only in a reply a person approved.
+  (mod-97), IPv4/IPv6 addresses and names in two narrow patterns become placeholders such as
+  `[EMAIL_1]`. Only e-mail addresses, phone numbers and names are ever put back, in the
+  reviewer's view and in the approved reply; card numbers, IBANs and IP addresses never are.
 - **Rules that win over the model**: data-protection requests go to the privacy office; legal
   threats, chargebacks and safety issues go to an escalations queue with a priority floor.
 - **Draft checks**: no promised refunds, compensation, deadlines or completed data deletion; no
-  invented contact details; no placeholders that do not exist; no internal queue names.
+  invented contact details; no placeholders that do not exist or that stand for a card number,
+  IBAN or IP address; no internal queue names. A flagged draft cannot be approved unedited.
 - **An eval set** (60 synthetic tickets, labelled) with a gate that fails CI on a drop, a mock
   model so everything runs offline, and a **recorded live run** (Gemini) that CI replays.
 
@@ -53,17 +55,19 @@ Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
 ```bash
 make install       # .venv with all extras and dev tools (locked)
 make demo          # the flow above: webhook -> triage -> review -> outbox, offline
-make check         # lint, strict types, 88 tests, the eval gate and the replay gate (what CI runs)
+make check         # lint, strict types, 120 tests, the eval gate and the replay gate (what CI runs)
 ```
 
 Run the API (mock model by default; nothing leaves the machine):
 
 ```bash
-export TRIAGE_WEBHOOK_SECRET=$(openssl rand -hex 16) TRIAGE_REVIEW_TOKEN=$(openssl rand -hex 16)
+export TRIAGE_WEBHOOK_SECRET=$(openssl rand -hex 16) TRIAGE_REVIEW_TOKEN=$(openssl rand -hex 16) \
+       TRIAGE_OUTBOX_TOKEN=$(openssl rand -hex 16)
 make serve         # http://127.0.0.1:8000, OpenAPI docs at /docs
 ```
 
-Without those two variables the webhook and the review endpoints refuse every request.
+Each of the three secrets guards one role (signed intake, people reviewing, the delivery
+integration); without it, that part of the API refuses every request.
 
 ## How it works
 
@@ -86,14 +90,18 @@ merge ──────── rules win; the model may raise a priority, never 
 draft checks ── commitments · invented personal data · unknown placeholders · internal names
    │           failed → still queued for a person, flagged, cannot be approved unedited
    ▼
-review queue ── a person approves (as drafted or edited) or rejects; append-only event log
+review queue ── a person approves (as drafted or edited) or rejects; append-only event log;
+   │           erasure clears the personal data of one review on request
    │
    ▼
-outbox ──────── approved reply with personal data restored; an integration delivers and acks
+outbox ──────── approved reply with e-mail, phone and name restored; an integration delivers
+                and acknowledges
 ```
 
-If the model call fails, the ticket is still queued for a person, in the queue the rules pick
-(or the general queue) with no draft.
+If the model call fails for any reason, the ticket is still queued for a person, in the queue
+the rules pick (or the general queue) with no draft. A redelivered ticket (same id, same
+content) is answered from the store without calling the model again; the same id with different
+content is refused (409).
 
 ### API
 
@@ -104,21 +112,26 @@ If the model call fails, the ticket is still queued for a person, in the queue t
 | `GET` | `/v1/reviews/{id}` | reviewer | one review plus its event log |
 | `POST` | `/v1/reviews/{id}/approve` | reviewer | `{reviewer, reply?}`; a flagged draft needs an edited `reply` |
 | `POST` | `/v1/reviews/{id}/reject` | reviewer | `{reviewer, reason?}`; nothing is sent |
+| `POST` | `/v1/reviews/{id}/erase` | reviewer | `{reviewer}`; clears the personal data held for that review |
 | `GET` | `/v1/outbox` | integration | approved replies not yet delivered |
 | `POST` | `/v1/outbox/{id}/ack` | integration | mark delivered |
 | `GET` | `/healthz` | anyone | liveness and the configured model |
 
-Reviewer and integration endpoints take `Authorization: Bearer $TRIAGE_REVIEW_TOKEN`.
+Reviewer endpoints take `Authorization: Bearer $TRIAGE_REVIEW_TOKEN`; the outbox endpoints take
+`Authorization: Bearer $TRIAGE_OUTBOX_TOKEN`, which cannot approve anything.
 
 ### n8n workflows
 
-`workflows/n8n/ticket-intake.json` receives a ticket on an n8n webhook, builds the JSON body,
-signs it with the Crypto node (HMAC-SHA256 over `timestamp.body`) and posts it to the service.
-`workflows/n8n/deliver-approved-replies.json` polls the outbox every five minutes, passes each
-approved reply to a placeholder node where your helpdesk node goes, and acknowledges it. Both read
-`TRIAGE_API_URL`, `TRIAGE_WEBHOOK_SECRET` and `TRIAGE_REVIEW_TOKEN` from the n8n environment and
-contain no credentials. The tests check that they are well formed, that every node is connected,
-and that every URL they call is a route the API serves.
+`workflows/n8n/ticket-intake.json` receives a ticket on an n8n webhook, refuses callers without
+the `X-Intake-Token` header (401), builds the JSON body, signs it with the Crypto node
+(HMAC-SHA256 over `timestamp.body`, the exact string it then sends) and posts it to the service.
+`workflows/n8n/deliver-approved-replies.json` polls the outbox every five minutes, posts each
+approved reply to `HELPDESK_REPLY_URL` (or replace that node with your helpdesk's own node), and
+acknowledges the outbox item only after the send succeeded. They read `TRIAGE_API_URL`,
+`TRIAGE_INTAKE_TOKEN`, `TRIAGE_WEBHOOK_SECRET`, `TRIAGE_OUTBOX_TOKEN`, `HELPDESK_REPLY_URL` and
+`HELPDESK_TOKEN` from the n8n environment and contain no credentials. The tests check that they
+are well formed, that every node is connected, that unauthenticated intake is refused, and that
+every URL they call on this service is a route the API serves.
 
 ## Evals
 
@@ -130,8 +143,8 @@ numbers and IBANs, documentation IP ranges, invented names). It is split into `d
 
 | metric | meaning |
 |---|---|
-| pii_recall | share of labelled e-mails, phones, cards, IBANs and IPs absent from what the model sees (floor 1.0) |
-| name_recall | the same for names (narrow patterns; floor 0.9) |
+| pii_recall | share of labelled e-mails, phones, cards, IBANs and IPs of which no part is visible to the model (no e-mail local part, no run of 4+ letters or digits; floor 1.0) |
+| name_recall | the same for names, word by word (narrow patterns; floor 0.9) |
 | escalation_recall | share of labelled escalations the rules raised (floor 1.0) |
 | route / category / priority accuracy | exact match with the label |
 | urgent_recall | labelled-urgent tickets predicted urgent |
@@ -155,9 +168,14 @@ baseline, or on any model error or replay miss. The tests prove it bites: a mode
 | dev, first prompt | 30 | 0.933 | 0.933 | 0.933 | 1.000 | **0.800** |
 | dev, after the fix below | 30 | 0.933 | 0.933 | 0.933 | 1.000 | 1.000 |
 | **test, run once** | 30 | 0.967 | 1.000 | 0.800 | **0.333** | 1.000 |
-| all (recorded cassette) | 60 | 0.950 | 0.967 | 0.867 | 0.667 | 1.000 |
+| all (recorded cassette, replayed with today's checks) | 60 | 0.950 | 0.967 | 0.867 | 0.667 | 0.950 |
 
-PII, name and escalation recall were 1.000 in every run (they do not depend on the model).
+PII, name and escalation recall were 1.000 in every run (they do not depend on the model). The
+first three rows were scored with the first version of the draft checks. An independent review
+then made them stricter (no card number, IBAN or IP placeholder in a reply; more ways of
+promising a refund, a deadline or compensation). Replayed through the current checks, three
+recorded drafts are flagged: two mention the customer's card as `[CARD_1]` and one an IP address
+as `[IP_1]`.
 
 - **The draft checker caught a real failure.** With the first prompt, 6 of 30 dev drafts greeted
   the customer as `[NAME_1]` in tickets that had no name placeholder; the prompt's own example
@@ -165,9 +183,9 @@ PII, name and escalation recall were 1.000 in every run (they do not depend on t
   checker, those drafts would have reached a reviewer looking finished.
 - **Urgency is the weak spot.** On `test` the model called two of three urgent tickets "high":
   a business customer's integration failing on every request (orders not coming through) and an
-  unrecognised login. The third (a charging dock that smelled of burning plastic) was urgent
-  because the safety rule forces it. A missed urgent ticket lands in the right team at "high",
-  not on call. Adding rules for these cases now would be tuning on the test split; it needs
+  unrecognised login. The third (a charging dock that smelled of burning plastic) was called
+  urgent by the model, and the safety rule would have forced it anyway. A missed urgent ticket
+  lands in the right team at "high", not on call. Adding rules for these cases now would be tuning on the test split; it needs
   fresh tickets first.
 - 30 tickets per split is small: one ticket is 0.033. Treat differences of one ticket as noise.
 
@@ -186,22 +204,28 @@ used 91 calls in total (1 smoke test, 2 × 30 on `dev`, 30 on `test`).
 | `TRIAGE_GEMINI_LOCATION`, `TRIAGE_GEMINI_THINKING_LEVEL` | unset | Vertex location, thinking level |
 | `TRIAGE_MAX_LIVE_CALLS` | `0` | hard cap on live calls per process; `0` refuses every live call |
 | `TRIAGE_CASSETTE`, `TRIAGE_RECORD_CASSETTE` | | replay from / record to a cassette |
-| `TRIAGE_WEBHOOK_SECRET`, `TRIAGE_REVIEW_TOKEN` | unset | required for the webhook and the review API |
+| `TRIAGE_WEBHOOK_SECRET`, `TRIAGE_REVIEW_TOKEN`, `TRIAGE_OUTBOX_TOKEN` | unset | required for the webhook, the review API and the outbox |
 | `TRIAGE_DB` | `triage.sqlite3` | review queue and outbox (SQLite) |
 
 ## Limits
 
 - **Redaction is pattern-based.** Names are found only after "my name is" and on the line after
   a sign-off ("Kind regards,"). Names elsewhere in the text, postal addresses, dates of birth,
-  customer numbers and national id numbers are not redacted. English only.
+  customer numbers and national id numbers are not redacted. Over-redaction is accepted: a long
+  digit run that fails the card and IBAN checks may still be redacted as a phone number.
 - **English only.** Rules, mock keywords and draft checks are English patterns.
 - **Small eval set**, written by the author of the code. The live numbers are one run each on
   30 tickets; model output varies between runs.
 - **The n8n workflows were validated as JSON** (structure, connections, routes), not imported into
   a running n8n. They read `$env`; if your n8n blocks environment access in nodes, use n8n
-  variables instead. Activepieces flows are not included.
-- **One shared token** for reviewers and the delivery integration; no per-user accounts, roles
-  or rate limiting. SQLite, single process. Put it behind your own authentication before real use.
+  variables instead, and prefer n8n's own header-auth credential over the token check node.
+  Only n8n exports are included.
+- **Tokens, not accounts.** One token for all reviewers and one for the integration; the
+  reviewer name is recorded as the caller gives it. No rate limiting. SQLite, single process.
+  Put it behind your own authentication before real use.
+- **The draft checks look for commitments, not facts.** They over-flag on purpose ("we cannot
+  promise a refund" is flagged; a person rewrites it). They do not catch invented facts: one
+  recorded live draft states weekend phone hours the ticket never mentioned.
 - **The draft policy is an example**: which commitments need a person is a business decision.
 
 ## License

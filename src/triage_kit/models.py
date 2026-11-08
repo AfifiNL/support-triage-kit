@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class Category(StrEnum):
@@ -37,6 +37,13 @@ class Ticket(BaseModel):
     body: str = Field(min_length=1, max_length=20_000)
     channel: Literal["email", "chat", "form"] = "email"
     customer_tier: Literal["standard", "business"] = "standard"
+
+    @field_validator("body")
+    @classmethod
+    def _has_text(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("body is empty")
+        return v
 
 
 class ModelOutput(BaseModel):

@@ -38,12 +38,18 @@ TICKETS = [
 def run_demo() -> int:
     webhook_secret = secrets.token_hex(16)
     review_token = secrets.token_hex(16)
+    outbox_token = secrets.token_hex(16)
     client = TestClient(
         create_app(
-            Store(), MockTriageModel(), webhook_secret=webhook_secret, review_token=review_token
+            Store(),
+            MockTriageModel(),
+            webhook_secret=webhook_secret,
+            review_token=review_token,
+            outbox_token=outbox_token,
         )
     )
     auth = {"Authorization": f"Bearer {review_token}"}
+    delivery = {"Authorization": f"Bearer {outbox_token}"}
     print("== 1. tickets arrive through the signed webhook")
     for t in TICKETS:
         body = json.dumps(t).encode()
@@ -95,7 +101,7 @@ def run_demo() -> int:
     print(f"   reject demo-2 (handled by the privacy office): {r.status_code}")
 
     print("== 4. outbox: approved replies, personal data restored, waiting for delivery")
-    for item in client.get("/v1/outbox", headers=auth).json():
+    for item in client.get("/v1/outbox", headers=delivery).json():
         print(
             f"   #{item['id']} -> {item['ticket_id']}:\n      "
             + item["reply"].replace("\n", "\n      ")

@@ -35,5 +35,5 @@ def verify(body: bytes, header: str | None, secret: str, now: float | None = Non
     if abs(current - t) > TOLERANCE_S:
         raise SignatureError("signature timestamp outside the allowed window")
     expected = hmac.new(secret.encode(), f"{t}.".encode() + body, hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(expected, given):
+    if not hmac.compare_digest(expected.encode(), given.encode("utf-8", "replace")):
         raise SignatureError("signature does not match")

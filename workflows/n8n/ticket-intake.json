@@ -20,13 +20,72 @@
     },
     {
       "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "8fc72d39-8780-5b82-90c8-88337130e7e3",
+              "leftValue": "={{ $env.TRIAGE_INTAKE_TOKEN }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "1c177e81-acf5-5dcf-88c4-f42967020632",
+              "leftValue": "={{ $json.headers['x-intake-token'] }}",
+              "rightValue": "={{ $env.TRIAGE_INTAKE_TOKEN }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "6a3042d8-33ff-500d-b4c3-194a11fb2d69",
+      "name": "Check intake token",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: 'unauthorized' }) }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "f15f72f6-06cb-59d9-aa26-92c7197280ef",
+      "name": "Reject",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        440,
+        200
+      ]
+    },
+    {
+      "parameters": {
         "assignments": {
           "assignments": [
             {
               "id": "78d7afc1-8f93-56c9-8754-5986e96c6721",
               "name": "payload",
               "type": "string",
-              "value": "={{ JSON.stringify({ id: String($json.body.id), subject: $json.body.subject || '', body: $json.body.body, channel: $json.body.channel || 'email' }) }}"
+              "value": "={{ JSON.stringify({ id: $json.body.id == null ? null : String($json.body.id), subject: $json.body.subject || '', body: $json.body.body, channel: $json.body.channel || 'email', customer_tier: $json.body.customer_tier || 'standard' }) }}"
             },
             {
               "id": "44ba82ec-f0d9-5ec3-9b2f-eecf5bdc1db3",
@@ -43,7 +102,7 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        220,
+        440,
         0
       ]
     },
@@ -61,7 +120,7 @@
       "type": "n8n-nodes-base.crypto",
       "typeVersion": 1,
       "position": [
-        440,
+        660,
         0
       ]
     },
@@ -89,7 +148,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        660,
+        880,
         0
       ]
     },
@@ -104,7 +163,7 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        880,
+        1100,
         0
       ]
     }
@@ -114,7 +173,25 @@
       "main": [
         [
           {
+            "node": "Check intake token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check intake token": {
+      "main": [
+        [
+          {
             "node": "Build payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject",
             "type": "main",
             "index": 0
           }

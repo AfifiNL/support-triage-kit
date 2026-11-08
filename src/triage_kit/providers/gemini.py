@@ -84,7 +84,6 @@ class GeminiTriageModel:
     def triage(self, request: TriageRequest) -> ModelOutput:
         from google.genai import types
 
-        self.budget.take()
         config = types.GenerateContentConfig(
             system_instruction=SYSTEM_PROMPT,
             response_mime_type="application/json",
@@ -95,6 +94,7 @@ class GeminiTriageModel:
                 else None
             ),
         )
+        self.budget.take()  # only after the request is fully built
         try:
             resp = self._client.models.generate_content(
                 model=self.model, contents=build_user_prompt(request), config=config

@@ -36,7 +36,7 @@ def triage(ticket: Ticket, model: TriageModel) -> TriageResult:
     )
     try:
         out = model.triage(request)
-    except ProviderError as exc:
+    except Exception as exc:  # any failure must still reach a person
         # No model answer: the ticket still reaches a person, in the queue the rules pick,
         # or the general queue.
         category = outcome.force_category or Category.OTHER
@@ -54,7 +54,7 @@ def triage(ticket: Ticket, model: TriageModel) -> TriageResult:
             draft_findings=["no draft: the model call failed"],
             status="model_error",
             model=model.name,
-            error=str(exc),
+            error=str(exc) if isinstance(exc, ProviderError) else type(exc).__name__,
         )
     category = outcome.force_category or out.category
     priority = rules.max_priority(out.priority, outcome.priority_floor)

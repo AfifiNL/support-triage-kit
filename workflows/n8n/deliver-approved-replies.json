@@ -30,7 +30,7 @@
           "parameters": [
             {
               "name": "Authorization",
-              "value": "=Bearer {{ $env.TRIAGE_REVIEW_TOKEN }}"
+              "value": "=Bearer {{ $env.TRIAGE_OUTBOX_TOKEN }}"
             }
           ]
         },
@@ -46,27 +46,43 @@
       ]
     },
     {
-      "parameters": {},
-      "id": "8cfe971d-4864-535c-9046-674638952d46",
-      "name": "Send reply through your helpdesk",
-      "type": "n8n-nodes-base.noOp",
-      "typeVersion": 1,
-      "position": [
-        440,
-        0
-      ],
-      "notes": "Replace with your helpdesk node (it receives ticket_id and reply). Only approved replies reach this point."
-    },
-    {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.TRIAGE_API_URL }}/v1/outbox/{{ $json.id }}/ack",
+        "url": "={{ $env.HELPDESK_REPLY_URL }}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "Authorization",
-              "value": "=Bearer {{ $env.TRIAGE_REVIEW_TOKEN }}"
+              "value": "=Bearer {{ $env.HELPDESK_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ ticket_id: $json.ticket_id, reply: $json.reply }) }}",
+        "options": {}
+      },
+      "id": "7fce870c-809f-580a-9d4d-bfaddbe55d21",
+      "name": "Send reply via helpdesk API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "notes": "Point HELPDESK_REPLY_URL at your helpdesk's reply endpoint, or replace this node with your helpdesk's own n8n node. An error here stops the run, so nothing is acknowledged that was not sent."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.TRIAGE_API_URL }}/v1/outbox/{{ $('Fetch outbox').item.json.id }}/ack",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.TRIAGE_OUTBOX_TOKEN }}"
             }
           ]
         },
@@ -98,14 +114,14 @@
       "main": [
         [
           {
-            "node": "Send reply through your helpdesk",
+            "node": "Send reply via helpdesk API",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Send reply through your helpdesk": {
+    "Send reply via helpdesk API": {
       "main": [
         [
           {

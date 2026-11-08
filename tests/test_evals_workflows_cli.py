@@ -69,7 +69,7 @@ def test_n8n_workflow_is_well_formed(name: str) -> None:
         "n8n-nodes-base.httpRequest",
         "n8n-nodes-base.respondToWebhook",
         "n8n-nodes-base.scheduleTrigger",
-        "n8n-nodes-base.noOp",
+        "n8n-nodes-base.if",
     }
     triggers = {"n8n-nodes-base.webhook", "n8n-nodes-base.scheduleTrigger"}
     targets = set()
@@ -85,7 +85,26 @@ def test_n8n_workflow_is_well_formed(name: str) -> None:
         if n["type"] not in triggers:
             assert n["name"] in targets, f"{n['name']} is not connected"
     text = json.dumps(wf)
-    assert "Bearer {{ $env.TRIAGE_REVIEW_TOKEN }}" in text or "TRIAGE_WEBHOOK_SECRET" in text
+    assert "TRIAGE_REVIEW_TOKEN" not in text, "workflows must not hold the reviewer token"
+
+
+def test_intake_rejects_unauthenticated_calls_and_signs_what_it_sends() -> None:
+    wf = json.loads((ROOT / "workflows" / "n8n" / "ticket-intake.json").read_text())
+    nodes = {n["name"]: n for n in wf["nodes"]}
+    true_branch, false_branch = wf["connections"]["Check intake token"]["main"]
+    assert true_branch[0]["node"] == "Build payload"
+    assert nodes[false_branch[0]["node"]]["parameters"]["options"]["responseCode"] == 401
+    conditions = nodes["Check intake token"]["parameters"]["conditions"]["conditions"]
+    assert {c["operator"]["operation"] for c in conditions} == {"notEmpty", "equals"}
+    assert "$json.payload" in nodes["Sign payload"]["parameters"]["value"]
+    assert nodes["Send to triage service"]["parameters"]["body"] == "={{ $json.payload }}"
+
+
+def test_delivery_acks_the_outbox_item_not_the_helpdesk_response() -> None:
+    wf = json.loads((ROOT / "workflows" / "n8n" / "deliver-approved-replies.json").read_text())
+    ack = next(n for n in wf["nodes"] if n["name"] == "Acknowledge delivery")
+    assert "$('Fetch outbox').item.json.id" in ack["parameters"]["url"]
+    assert "TRIAGE_OUTBOX_TOKEN" in json.dumps(wf)
 
 
 def test_workflows_call_routes_that_exist() -> None:
@@ -95,16 +114,27 @@ def test_workflows_call_routes_that_exist() -> None:
     for f in (ROOT / "workflows" / "n8n").glob("*.json"):
         for n in json.loads(f.read_text())["nodes"]:
             url = n["parameters"].get("url", "")
-            if url:
-                path = url.split("}}", 1)[1].replace("{{ $json.id }}", "{oid}")
-                used.add(path)
+            if url and "TRIAGE_API_URL" in url:  # the helpdesk call goes elsewhere
+                path = url.split("}}", 1)[1]
+                used.add(path.replace("{{ $('Fetch outbox').item.json.id }}", "{oid}"))
     assert used == {"/v1/webhooks/tickets", "/v1/outbox", "/v1/outbox/{oid}/ack"}
     assert used <= paths
     intake = (ROOT / "workflows" / "n8n" / "ticket-intake.json").read_text()
     assert signing.HEADER in intake
 
 
-def test_cli_triage_and_demo(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_partial_leaks_count_as_leaks() -> None:
+    assert evals._leaked("GB82 WEST 1234 5698 7654 32", "IBAN [IBAN_1] but WEST 1234 left")
+    assert evals._leaked("jo.doe@example.com", "from jo.doe at [EMAIL_1]")
+    assert not evals._leaked("+44 7700 900123", "call [PHONE_1]")
+    assert evals._name_leaked("Zoë Müller", "[NAME_1]ë Müller")
+    assert not evals._name_leaked("Zoë Müller", "[NAME_1] wrote")
+
+
+def test_cli_triage_and_demo(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TRIAGE_PROVIDER", "mock")
     f = tmp_path / "t.json"
     f.write_text(json.dumps({"id": "x", "subject": "Cancel", "body": "Please cancel my plan"}))
     assert main(["triage", str(f)]) == 0

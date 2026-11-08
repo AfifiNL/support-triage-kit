@@ -44,12 +44,12 @@ RULES: tuple[Rule, ...] = (
     Rule(
         "data_protection_request",
         _rx(
-            r"\b(delete|erase|remove) (all )?(of )?my (personal )?(data|information|details)",
+            r"\b(delete|erase|remove)\b[^.!?\n]{0,40}\bmy (personal )?(data|information|details)\b",
             r"\bright to (be forgotten|erasure|access)\b",
             r"\bGDPR\b",
             r"\bdata subject\b",
             r"\b(copy|export) of (all )?(the )?(my )?(personal )?data\b",
-            r"\bwhat (personal )?data do you (hold|have|keep|store)\b",
+            r"\bwhat (personal )?(data|information) do you (hold|have|keep|store)\b",
             r"\bsubject access request\b",
         ),
         Priority.HIGH,
@@ -61,7 +61,8 @@ RULES: tuple[Rule, ...] = (
         _rx(
             r"\b(my )?(lawyer|attorney|solicitor)s?\b",
             r"\blegal action\b",
-            r"\b(sue|suing)\b",
+            r"\b(will|going to|gonna|'ll|to|and) sue\b",
+            r"\bsuing\b",
             r"\bsmall claims\b",
             r"\btake (you|this) to court\b",
         ),
@@ -81,8 +82,9 @@ RULES: tuple[Rule, ...] = (
     Rule(
         "safety",
         _rx(
-            r"\b(smoke|smoking|caught fire|on fire|sparks?|overheat\w*|injur\w*|electric shock)\b",
-            r"\bburn(ed|t|ing)?\b(?!-in)",
+            r"\b(smoke|smoking)\b(?! (detector|alarm)s?\b)",
+            r"\b(caught fire|on fire|sparks?|overheat\w*|injur\w*|electric shock)\b",
+            r"\bburn(ed|t|ing)?\b(?!-in)(?! (a |the |my |your )?(cds?|dvds?|discs?|disks?|iso)\b)",
         ),
         Priority.URGENT,
         route=ESCALATIONS_QUEUE,
