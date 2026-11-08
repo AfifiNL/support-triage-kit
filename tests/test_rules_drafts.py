@@ -105,7 +105,7 @@ def test_draft_findings(draft: str, finding: str) -> None:
         ("Ik maak gebruik van mijn recht op vergetelheid.", "data_protection_request"),
         ("Ik heb mijn advocaat ingeschakeld.", "legal_threat"),
         ("Ik heb bij mijn bank een terugboeking aangevraagd.", "chargeback"),
-        ("Ik rook een brandlucht bij de oplader.", "safety"),
+        ("Ik rook een brandlucht bij de oplader.", "safety"),  # "brandlucht" decides
     ],
 )
 def test_dutch_rules_fire(text: str, rule: str) -> None:
@@ -114,7 +114,15 @@ def test_dutch_rules_fire(text: str, rule: str) -> None:
 
 @pytest.mark.parametrize(
     "text",
-    ["Graag het bedrag terugboeken.", "the avg price went up", "Mijn rookmelder piept."],
+    [
+        "Graag het bedrag terugboeken.",
+        "the avg price went up",
+        "Mijn rookmelder piept.",
+        "AVG antivirus blocks your installer",
+        "De doos rook naar sigaretten.",
+        "Ik zoek een rook- en CO-melder.",
+        "Wanneer zie ik de terugboeking op mijn rekening?",
+    ],
 )
 def test_dutch_near_misses(text: str) -> None:
     assert rules.evaluate(text).hits == ()
@@ -151,3 +159,51 @@ def test_reply_must_be_in_the_tickets_language() -> None:
 )
 def test_dutch_nouns_for_the_customers_request_are_not_promises(draft: str) -> None:
     assert "promises a refund" not in check_draft(draft, {}, "nl")
+
+
+@pytest.mark.parametrize(
+    ("text", "rule"),
+    [
+        ("Kunnen jullie mijn gegevens verwijderen?", "data_protection_request"),
+        ("Ik wil mijn gegevens laten verwijderen.", "data_protection_request"),
+        ("Ik wil weten welke gegevens jullie van mij hebben.", "data_protection_request"),
+        ("Ik wil inzage in mijn persoonsgegevens.", "data_protection_request"),
+        ("Graag een kopie van mijn gegevens.", "data_protection_request"),
+        ("Ik stel u aansprakelijk.", "legal_threat"),
+        ("Dit is een ingebrekestelling.", "legal_threat"),
+        ("De incasso is gestorneerd.", "chargeback"),
+        ("Ik laat het via mijn bank terugboeken.", "chargeback"),
+        ("Het apparaat begon te roken.", "safety"),
+        ("De accu is ontploft.", "safety"),
+    ],
+)
+def test_more_dutch_phrasings(text: str, rule: str) -> None:
+    assert rule in rules.evaluate(text).hits
+
+
+@pytest.mark.parametrize(
+    ("draft", "finding"),
+    [
+        ("U krijgt uw geld terug.", "promises a refund"),
+        ("Het bedrag wordt teruggestort.", "promises a refund"),
+        ("Wij vergoeden de verzendkosten.", "offers compensation"),
+        ("Ik garandeer dat het werkt.", "guarantees"),
+        ("We bellen u morgen.", "promises a deadline"),
+        ("U hoort binnen een week van ons.", "promises a deadline"),
+        ("Uw account is opgeheven.", "confirms data deletion"),
+        ("Ik ben een AI-assistent.", "mentions being an AI"),
+    ],
+)
+def test_more_dutch_draft_findings(draft: str, finding: str) -> None:
+    assert finding in check_draft(draft, {}, "nl")
+
+
+@pytest.mark.parametrize(
+    "draft",
+    [
+        "Hallo,\n\nWe zoeken het uit.\n\nKlantenservice",
+        "Is het gelukt? Laat het ons weten, dan kijken we of het werkt.",
+    ],
+)
+def test_short_dutch_replies_are_not_blocked_for_language(draft: str) -> None:
+    assert check_draft(draft, {}, "nl") == []

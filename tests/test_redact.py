@@ -96,7 +96,8 @@ def test_restore_never_puts_back_cards_ibans_or_ips() -> None:
         ("Groeten,\nMila van den Berg", "Mila van den Berg"),
         ("Met vriendelijke groet,\nSanne de Vries", "Sanne de Vries"),
         ("Mijn naam is Pieter Smit. De doos is kapot.", "Pieter Smit"),
-        ("Hallo, ik ben Jan de Vries en ik heb een vraag.", "Jan de Vries"),
+        ("Hallo, mijn naam is Jan de Vries en ik heb een vraag.", "Jan de Vries"),
+        ("Groeten,\nJ. de Vries", "J. de Vries"),
     ],
 )
 def test_dutch_names(text: str, name: str) -> None:
@@ -113,3 +114,31 @@ def test_lower_case_words_after_ik_ben_are_not_names() -> None:
 )
 def test_our_own_signatures_are_not_names(text: str) -> None:
     assert redact(text).mapping == {}
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Thanks!\nI am waiting for a reply.",
+        "Bedankt!\nIk hoor het graag",
+        "Met vriendelijke groet,\nDe klantenservice",
+        "Met vriendelijke groet,\nHet Klantenservice-team",
+    ],
+)
+def test_sign_off_lines_that_are_not_names(text: str) -> None:
+    assert redact(text).mapping == {}
+
+
+def test_two_names_after_a_sign_off() -> None:
+    r = redact("Groetjes,\nSanne en Pieter")
+    assert r.text == "Groetjes,\n[NAME_1] en [NAME_2]"
+
+
+def test_intro_after_another_sentence_is_found() -> None:
+    assert redact("ik ben boos mijn naam is Sanne Jansen").mapping == {"[NAME_1]": "Sanne Jansen"}
+
+
+def test_surname_and_first_name_alone_are_redacted_too() -> None:
+    r = redact("Van Dijk hier. Sanne wacht nog.\n\nGroeten,\nSanne van Dijk")
+    assert "Dijk" not in r.text
+    assert "Sanne" not in r.text

@@ -146,7 +146,10 @@ every URL they call on this service is a route the API serves.
 in Dutch, each labelled with language, category, priority, queue, expected escalations, and the
 exact personal-data strings it contains (e-mails on example domains, phone numbers in reserved
 fictional ranges, published test card numbers and IBANs, documentation IP ranges, invented
-names). It is split into `dev` (40) and `test` (40); each split was fixed before its first run.
+names). It is split into `dev` (40) and `test` (40). The 60 English tickets and their split
+were fixed before recording 1. The 20 Dutch tickets were added for recording 2; they are
+translations or adaptations of English tickets, and five of them sit in the other split than
+their English original, so `test` is not fully independent of `dev`.
 
 | metric | meaning |
 |---|---|
@@ -163,8 +166,8 @@ were written before the first run. The gate also fails when a score drops agains
 baseline, or on any model error or replay miss. The tests prove it bites: a model that answers
 "other / low" for everything fails it, while redaction and escalation stay at 1.0.
 
-**Offline, mock model** (keyword rules written alongside the tickets, Dutch keywords included;
-it measures the deterministic layers, not a model):
+**Offline, mock model** (keyword rules written while looking at all tickets, both splits,
+Dutch keywords included; it measures the deterministic layers, not a model):
 
 | scope | pii | names | escalations | language | route | category | priority | urgent recall | drafts pass |
 |---|---|---|---|---|---|---|---|---|---|
@@ -199,6 +202,14 @@ customer's chargeback ("terugboeking", a noun); the Dutch refund pattern was nar
 - **Dutch drafts are Dutch, mostly.** All 20 Dutch drafts were in Dutch and signed
   "Klantenservice"; 3 of them greet the customer as "Beste customer", an English word the
   language check does not catch.
+- **What "run once" does and does not mean for recording 2.** `test` ran once on frozen code.
+  But the new prompt rule (never repeat card, IBAN or IP placeholders) answers failures seen on
+  two recording-1 `test` tickets, and `test` grew by 10 Dutch tickets after recording 1 had run
+  it. Recording 2's `test` numbers are a re-run, not a fresh held-out measurement.
+- **The Dutch patterns were widened after an independent review** (more data-protection,
+  legal, chargeback, safety and draft phrasings, fewer false alarms). The eval tickets did not
+  change and the recorded requests did not either (the replay has no misses), so the recorded
+  scores stand; the new phrasings are covered by unit tests, not by the eval set.
 - 40 tickets per split is small: one ticket is 0.025. Treat one-ticket differences as noise.
 
 CI replays the recorded run (`make eval-replay`) at no cost: any change to the prompt, the
@@ -222,16 +233,19 @@ recording 2 took 81 (1 smoke test, 40 on `dev`, 40 on `test`).
 
 ## Limits
 
-- **Redaction is pattern-based.** Names are found only after "my name is" and on the line after
-  a sign-off ("Kind regards,"). Names elsewhere in the text, postal addresses, dates of birth,
+- **Redaction is pattern-based.** Names are found only after "my name is" / "mijn naam is" and
+  on a line after a sign-off ("Kind regards,", "Met vriendelijke groet,") that holds nothing but
+  names; once found, the surname and first name are redacted wherever else they appear. Names elsewhere in the text, postal addresses, dates of birth,
   customer numbers and national id numbers are not redacted. Over-redaction is accepted: a long
   digit run that fails the card and IBAN checks may still be redacted as a phone number.
 - **English and Dutch only.** Other languages are treated as English. The language detector
-  counts common function words; a ticket mixing both languages gets the majority language.
+  counts common function words (words both languages share are ignored); a ticket mixing both
+  languages, or a Dutch ticket with a long pasted English error message, gets the majority
+  language. A reply is blocked for its language only when it is clearly in the other one.
   The Dutch patterns and reply templates were written by the author, not checked by a native
   speaker.
-- **Small eval set**, written by the author of the code. The live numbers are one run each on
-  30 tickets; model output varies between runs.
+- **Small eval set**, written by the author of the code. The live numbers are one run per split
+  (30 or 40 tickets); model output varies between runs.
 - **The n8n workflows were validated as JSON** (structure, connections, routes), not imported into
   a running n8n. They read `$env`; if your n8n blocks environment access in nodes, use n8n
   variables instead, and prefer n8n's own header-auth credential over the token check node.

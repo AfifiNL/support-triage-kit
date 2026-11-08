@@ -86,12 +86,18 @@ def _leaked(value: str, text: str) -> bool:
     return any(p.lower() in low for p in parts)
 
 
+_PARTICLE_WORDS = frozenset({"van", "de", "der", "den", "het", "ter", "ten", "te", "op", "in"})
+
+
 def _name_leaked(name: str, text: str) -> bool:
-    # Capitalised parts only: a surname particle ("van", "de") also occurs as a plain word.
+    # Every part of the name except surname particles ("van", "de", which also occur as plain
+    # words), matched as a whole word in any case.
     tokens = [
-        t for t in re.findall(r"[^\W\d_][\w'\u2019-]*", name) if len(t) >= 2 and t[0].isupper()
+        t
+        for t in re.findall(r"[^\W\d_][\w'\u2019-]*", name)
+        if len(t) >= 2 and t.lower() not in _PARTICLE_WORDS
     ]
-    return any(re.search(rf"(?<!\w){re.escape(t)}(?!\w)", text) for t in tokens)
+    return any(re.search(rf"(?<!\w){re.escape(t)}(?!\w)", text, re.IGNORECASE) for t in tokens)
 
 
 @dataclass

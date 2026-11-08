@@ -31,18 +31,18 @@ IPV6 = re.compile(r"(?<![\w:])(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}(?![\w:]
 PHONE = re.compile(
     r"(?<![\w+])(?:\+\d{1,3}[ .-]?)?(?:\(\d{1,4}\)[ .-]?)?\d{2,5}(?:[ .-]?\d{2,5}){1,4}(?![\w])"
 )
-# Name tokens: Unicode letters, apostrophes and hyphens; capitalisation is checked in `_name_ok`.
-_NAME_PART = r"[^\W\d_][^\W\d_'\u2019-]*(?:['\u2019-][^\W\d_]+)*"
+# Name tokens: Unicode letters, apostrophes, hyphens, initials ("J."); capitals: `_strict_name`.
+_NAME_PART = r"(?:[^\W\d_]\.|[^\W\d_][^\W\d_'\u2019-]*(?:['\u2019-][^\W\d_]+)*)"
 # Dutch surnames carry lower-case particles: "Mila van den Berg", "Jan de Vries".
 _PARTICLE = r"(?:van|de|der|den|het|ter|ten|te|op|in|'t)"
 _NAME = rf"{_NAME_PART}(?: (?:{_PARTICLE} )*{_NAME_PART}){{0,2}}"
-NAME_INTRO = re.compile(rf"\b(?i:my name is|mijn naam is|ik ben) ({_NAME})")
+NAME_INTRO = re.compile(rf"\b(?i:my name is|mijn naam is) ({_NAME})")
 SIGN_OFF = re.compile(
     r"^(?i:kind regards|best regards|warm regards|regards|best|thanks|thank you|many thanks"
     r"|cheers|sincerely"
     r"|met vriendelijke groet(?:en)?|vriendelijke groet(?:en)?|hartelijke groet(?:en)?"
     r"|groet(?:en|jes)?|mvg|bedankt|alvast bedankt)"
-    rf"[,!.]?[ \t]*\r?\n[ \t]*({_NAME})[ \t]*\r?$",
+    r"[,!.]?[ \t]*\r?\n[ \t]*([^\r\n]+?)[ \t]*\r?$",
     re.MULTILINE,
 )
 PLACEHOLDER = re.compile(r"\[(EMAIL|IBAN|CARD|IP|PHONE|NAME)_(\d+)\]")
@@ -161,23 +161,50 @@ def _phone_ok(value: str) -> bool:
 _PARTICLES = frozenset({"van", "de", "der", "den", "het", "ter", "ten", "te", "op", "in", "'t"})
 
 
+_TITLES = frozenset({"mw.", "mevr.", "dhr.", "mr.", "mrs.", "ms.", "dr."})
+# Words that can stand alone after a sign-off (or start a sentence) but are not names.
+_NOT_NAME_WORDS = frozenset({"i", "ik", "we", "wij", "hij", "zij", "you", "u", "jij"})
+_NOT_NAME_PARTS = ("service", "support", "team")
+
+
+def _capitalised(token: str) -> bool:
+    return token[0].isupper()
+
+
+def _strict_name(value: str) -> bool:
+    """A whole string that is a person's name: capitalised words (initials allowed), lower-case
+    surname particles inside, an optional title in front, at least one word of 2+ letters."""
+    parts = value.split()
+    while parts and parts[0].lower() in _TITLES:
+        parts = parts[1:]
+    if not parts or len(parts) > 5:
+        return False
+    first = parts[0]
+    if first.lower() in _PARTICLES or first.lower() in _NOT_NAME_WORDS or first in NOT_NAMES:
+        return False
+    if any(w in value.lower() for w in _NOT_NAME_PARTS):
+        return False
+    if not any(len(p) >= 2 and not p.endswith(".") for p in parts):
+        return False
+    return all(p in _PARTICLES or _capitalised(p) for p in parts) and parts[-1] not in _PARTICLES
+
+
 def _trim_name(value: str) -> str | None:
     """The capitalised name at the start of `value`: stop at the first lower-case word that is
     not a surname particle, drop trailing particles. None when nothing name-like is left."""
     kept: list[str] = []
     for part in value.split():
-        if (part in _PARTICLES and kept) or part[0].isupper():
+        if (part in _PARTICLES and kept) or _capitalised(part):
             kept.append(part)
         else:
             break
     while kept and kept[-1] in _PARTICLES:
         kept.pop()
-    if not kept or kept[0] in NOT_NAMES:
-        return None
-    return " ".join(kept)
+    name = " ".join(kept)
+    return name if kept and _strict_name(name) else None
 
 
-def _sub_names(r: _Redactor, text: str, rx: re.Pattern[str]) -> str:
+def _sub_intro(r: _Redactor, text: str) -> str:
     def repl(m: re.Match[str]) -> str:
         name = _trim_name(m.group(1))
         if name is None:
@@ -186,7 +213,43 @@ def _sub_names(r: _Redactor, text: str, rx: re.Pattern[str]) -> str:
         whole = m.group(0)
         return whole[:start] + r.placeholder("NAME", name) + whole[start + len(name) :]
 
-    return rx.sub(repl, text)
+    return NAME_INTRO.sub(repl, text)
+
+
+def _sub_signoff(r: _Redactor, text: str) -> str:
+    """The line after a sign-off is redacted only if ALL of it is one or more names
+    ("Sanne", "Sanne en Pieter", "J. de Vries"); otherwise nothing on it is touched."""
+
+    def repl(m: re.Match[str]) -> str:
+        line = m.group(1)
+        names = [n.strip() for n in re.split(r"\s+(?:en|and|&)\s+|\s*,\s*", line) if n.strip()]
+        if not names or not all(_strict_name(n) for n in names):
+            return m.group(0)
+        out = line
+        for n in names:
+            out = out.replace(n, r.placeholder("NAME", n), 1)
+        start = m.start(1) - m.start(0)
+        whole = m.group(0)
+        return whole[:start] + out + whole[start + len(line) :]
+
+    return SIGN_OFF.sub(repl, text)
+
+
+def _also_parts(value: str) -> list[str]:
+    """Shorter forms of a full name that identify the person too: the surname with its
+    particles ("van Dijk") and the first name ("Sanne"), when at least 3 letters long."""
+    parts = [p for p in value.split() if p.lower() not in _TITLES]
+    forms: list[str] = []
+    if len(parts) >= 2:
+        surname = parts[1:]
+        while surname and surname[0] in _PARTICLES and len(surname) > 1:
+            forms.append(" ".join(surname))
+            surname = surname[1:]
+        if len(surname[0]) >= 3 and not surname[0].endswith("."):
+            forms.append(surname[0])
+        if len(parts[0]) >= 3 and not parts[0].endswith("."):
+            forms.append(parts[0])
+    return forms
 
 
 def _sub_iban(r: _Redactor, text: str) -> str:
@@ -212,12 +275,18 @@ def redact(text: str) -> Redaction:
     out = r.sub(out, IPV4, "IP")
     out = r.sub(out, IPV6, "IP", _ipv6_ok)
     out = r.sub(out, PHONE, "PHONE", _phone_ok)
-    out = _sub_names(r, out, NAME_INTRO)
-    out = _sub_names(r, out, SIGN_OFF)
-    # A name found once is redacted everywhere it appears in the ticket.
+    out = _sub_intro(r, out)
+    out = _sub_signoff(r, out)
+    # A name found once is redacted everywhere it appears in the ticket, also as surname
+    # ("Van Dijk" / "van Dijk") or first name alone. Longest forms first.
     for ph, value in list(r.mapping.items()):
         if ph.startswith("[NAME_"):
-            out = re.sub(rf"\b{re.escape(value)}\b", ph, out)
+            for form in [value, *_also_parts(value)]:
+                rx = re.escape(form)
+                first = form.split()[0]
+                if first in _PARTICLES:  # a particle is capitalised at a sentence start
+                    rx = f"(?i:{re.escape(first)}){re.escape(form[len(first) :])}"
+                out = re.sub(rf"(?<![\w\[]){rx}(?![\w\]])", ph, out)
     return Redaction(out, r.mapping)
 
 

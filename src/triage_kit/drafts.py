@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import re
 
-from triage_kit.language import detect
+from triage_kit.language import clearly_not
 from triage_kit.redact import RESTORABLE, placeholders_in, redact
 from triage_kit.rules import ESCALATIONS_QUEUE, ONCALL_QUEUE, ROUTES
 
@@ -41,8 +41,8 @@ COMMITMENTS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
         ("guarantees", r"\bguarantee"),
         (
             "promises a deadline",
-            r"\bwithin \d+( ?[-\u2013] ?\d+)? (minutes?|hours?|days?|weeks?|business days?"
-            r"|working days?)\b|\bby (today|tonight|tomorrow|end of (the )?day)\b",
+            r"\bwithin (\d+( ?[-\u2013] ?\d+)?|an?|one|two|three) (minutes?|hours?|days?|weeks?"
+            r"|business days?|working days?)\b|\bby (today|tonight|tomorrow|end of (the )?day)\b",
         ),
         (
             "confirms data deletion",
@@ -57,6 +57,9 @@ COMMITMENTS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
             # verbs only: "terugboeking"/"terugbetaling" as nouns name the customer's request
             r"\b(wij|we|ik)\b[^.!?\n]{0,40}\b(terugbetalen|terugbetaald|terugstorten"
             r"|teruggestort|terugboeken|teruggeboekt|geld terug)\b"
+            r"|\b(u krijgt|je krijgt|krijgt u)\b[^.!?\n]{0,30}\b(geld|bedrag)\b"
+            r"[^.!?\n]{0,15}\bterug\b"
+            r"|\b(wordt|worden) (terugbetaald|teruggestort)\b|\brestitutie\b"
             # separable verb: "wij betalen het bedrag ... terug"
             r"|\b(wij|we|ik)\b[^.!?\n]{0,40}\b(betalen|storten|boeken)\b[^.!?\n]{0,40}\bterug\b",
         ),
@@ -67,22 +70,24 @@ COMMITMENTS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
         ),
         (
             "offers compensation",
-            r"\b(compensatie|schadevergoeding|tegoedbon|korting\w*|tegoed|gecrediteerd"
-            r"|gratis (maand|maanden|verzending))",
+            r"\b(compensatie|schadevergoeding|tegoedbon|waardebon|tegemoetkoming|korting\w*"
+            r"|tegoed|gecrediteerd|vergoeden|vergoeding|gratis (maand|maanden|verzending))",
         ),
-        ("guarantees", r"\bgaranderen\b|\bgegarandeerd\b"),
+        ("guarantees", r"\bgarande\w*|\bgegarandeerd\b"),
         (
             "promises a deadline",
-            r"\bbinnen \d+( ?[-\u2013] ?\d+)? (minuten|uur|uren|dagen|werkdagen|weken)\b"
-            r"|\b(vandaag nog|uiterlijk morgen|voor het einde van de dag)\b",
+            r"\bbinnen (\d+( ?[-\u2013] ?\d+)?|een|\u00e9\u00e9n|twee|drie) (minuut|minuten|uur"
+            r"|uren|dag|dagen|werkdag|werkdagen|week|weken)\b"
+            r"|\b(vandaag nog|morgen|uiterlijk morgen|voor het einde van de dag)\b",
         ),
         (
             "confirms data deletion",
-            r"\b(gegevens|account)\b[^.!?\n]{0,20}\b(zijn|is) (nu )?(verwijderd|gewist)\b"
+            r"\b(gegevens|account)\b[^.!?\n]{0,20}\b(zijn|is)\b[^.!?\n]{0,20}"
+            r"\b(verwijderd|gewist|opgeheven)\b"
             r"|\b(wij|we|ik) (hebben|heb)\b[^.!?\n]{0,30}\b(verwijderd|gewist)\b",
         ),
         ("gives legal advice", r"\bjuridisch advies\b"),
-        ("mentions being an AI", r"\b(als (een )?ai|taalmodel)\b"),
+        ("mentions being an AI", r"\b(als (een )?ai|taalmodel|ai[- ]assistent|chatbot)\b"),
     )
 )
 INTERNAL_NAMES = {*ROUTES.values(), ESCALATIONS_QUEUE, ONCALL_QUEUE}
@@ -108,7 +113,9 @@ def check_draft(draft: str, mapping: dict[str, str], language: str | None = None
     for name, rx in COMMITMENTS:
         if rx.search(text) and name not in findings:
             findings.append(name)
-    if language is not None and detect(text) != language:
+    if language == "en" and clearly_not(text, "en"):
+        findings.append("reply is not in the ticket's language (en)")
+    elif language == "nl" and clearly_not(text, "nl"):
         findings.append(f"reply is not in the ticket's language ({language})")
     low = text.lower()
     leaked = sorted(q for q in INTERNAL_NAMES if re.search(rf"\b{re.escape(q)}\b", low))

@@ -130,6 +130,8 @@ def test_partial_leaks_count_as_leaks() -> None:
     assert not evals._leaked("+44 7700 900123", "call [PHONE_1]")
     assert evals._name_leaked("Zoë Müller", "[NAME_1]ë Müller")
     assert not evals._name_leaked("Zoë Müller", "[NAME_1] wrote")
+    assert evals._name_leaked("Sanne van Dijk", "wrote sanne yesterday")  # any case
+    assert not evals._name_leaked("Mila van den Berg", "jullie van mij")  # particles only
 
 
 def test_cli_triage_and_demo(

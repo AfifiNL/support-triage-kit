@@ -84,4 +84,5 @@ fails the gate with "re-record". Re-recording reuses unchanged calls, so it cost
 | baseline tolerance | 0.02 (mock), 0.00 (replay) | the mock and the replay are deterministic, so any change is real |
 | prompt change | placeholder list per ticket | made on `dev` after 6/30 drafts used a placeholder that did not exist; `test` was run once afterwards |
 | Dutch support (pass 2) | 20 Dutch tickets, dev/test 10/10 | `language_accuracy` floor 0.95 written before the first run; one checker change on `dev` (Dutch refund pattern: verbs only); recording 2 re-recorded `dev` and ran `test` once |
+| Dutch patterns widened (pass 2 review) | rules, names, drafts, language | review found missed phrasings and false alarms ("AVG antivirus", "rook" as "smelled", a refund question read as a chargeback); fixed with unit tests; recorded requests unchanged (replay without misses) |
 | stricter draft checks | after the independent review | re-baselined the replay (`evals/baseline_replay.json`): 3 recorded drafts that repeat a card or IP placeholder are now flagged; the floors were not changed |
